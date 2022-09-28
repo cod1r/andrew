@@ -3,6 +3,7 @@ const env_vars = @import("env_vars.zig");
 const libsodium = @cImport({
     @cInclude("sodium.h");
 });
+const utils = @import("utils.zig");
 fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
     var newline_start_line: usize = 0;
     {
@@ -35,20 +36,31 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
                 break;
             }
         }
-        // maybe strip header value?
         if (key_end > index and newline_value_end > key_end + 1) {
             var key = try alloc.alloc(u8, key_end - index);
-            var value = try alloc.alloc(u8, newline_value_end - (key_end + 1));
             std.mem.copy(u8, key, buff[index..key_end]);
-            std.mem.copy(u8, value, buff[key_end + 1 .. newline_value_end]);
-            try map.put(key, buff[key_end + 1 .. newline_value_end]);
+
+            var value_beginning: usize = key_end + 1;
+            var value_end: usize = newline_value_end;
+            if (buff[value_beginning] == ' ') value_beginning += 1;
+            while (buff[value_end] == '\r' or buff[value_end] == ' ' or buff[value_end] == '\n') {
+                value_end -= 1;
+            }
+            var value = try alloc.alloc(u8, value_end - value_beginning + 1);
+            std.mem.copy(u8, value, buff[value_beginning .. value_end + 1]);
+
+            try map.put(key, value);
             index = newline_value_end + 1;
         } else if (key_end > index and newline_value_end <= key_end + 1) {
             var key = try alloc.alloc(u8, key_end - index);
-            var value = try alloc.alloc(u8, buff.len - (key_end + 1));
             std.mem.copy(u8, key, buff[index..key_end]);
-            std.mem.copy(u8, value, buff[key_end + 1 .. buff.len]);
-            try map.put(key, buff[key_end + 1 .. buff.len]);
+
+            var value_beginning: usize = key_end + 1;
+            if (buff[value_beginning] == ' ') value_beginning += 1;
+            var value = try alloc.alloc(u8, buff.len - value_beginning);
+            std.mem.copy(u8, value, buff[value_beginning .. buff.len]);
+
+            try map.put(key, value);
             index = buff.len;
         } else {
             break;
@@ -77,6 +89,10 @@ pub fn main() !void {
     defer ss.deinit();
     try ss.listen(add);
     std.debug.print("listening on port {}\n", .{PORT});
+    if (libsodium.sodium_init() < 0) {
+        unreachable;
+    }
+    std.debug.print("libsodium initialized\n", .{});
     while (true) {
         var conn = try ss.accept();
         var buff: [65536]u8 = undefined;
@@ -89,25 +105,22 @@ pub fn main() !void {
         var timestamp = map.get("X-Signature-Timestamp");
         if (signature != null and timestamp != null) {
             // adding 2 because of the CRLF empty line
+            std.debug.print("signature: {s}\n", .{signature.?});
+            std.debug.print("timestamp: {s}\n", .{timestamp.?});
             var timestamp_body = try std.mem.concat(
                 alloc,
                 u8,
                 &[_][]u8{ timestamp.?, buff[msg_size + 2 ..] },
             );
-            std.debug.print("crypto_sign_BYTES: {}\n", .{libsodium.crypto_sign_BYTES});
-            std.debug.print("crypto_sign_PUBLICKEYBYTES: {}\n", .{libsodium.crypto_sign_PUBLICKEYBYTES});
-            var timestamp_body_libsodium = try alloc.alloc(u8, libsodium.crypto_sign_BYTES);
-            defer alloc.free(timestamp_body_libsodium);
-            var public_key_libsodium = try alloc.alloc(u8, libsodium.crypto_sign_PUBLICKEYBYTES);
-            defer alloc.free(public_key_libsodium);
-            std.mem.copy(u8, timestamp_body_libsodium, timestamp_body);
+            std.debug.print("TIMESTAMP_BODY: {s}\n", .{timestamp_body});
             // verify request with libsodium
             var verify = libsodium.crypto_sign_verify_detached(
-                @ptrCast([*c]const u8, timestamp_body_libsodium.ptr),
+                @ptrCast([*c]const u8, timestamp_body.ptr),
                 @ptrCast([*c]const u8, signature.?),
                 signature.?.len,
-                @ptrCast([*c]const u8, public_key_libsodium.ptr),
+                @ptrCast([*c]const u8, env_vars.PUBLIC_KEY),
             );
+            std.debug.print("VERIFY STATUS: {}\n", .{verify});
             if (verify == -1) {
                 _ = try BAD_SIG(conn.stream);
             }
@@ -119,7 +132,7 @@ pub fn main() !void {
 }
 
 test "parse http message" {
-    var msg: []const u8 = "POST / HTTP/1.1\r\nContent-Type: application/json";
+    var msg: []const u8 = "POST / HTTP/1.1\r\nContent-Type: application/json\r\n";
     var msg_copy = try std.testing.allocator.alloc(u8, msg.len);
     defer std.testing.allocator.free(msg_copy);
     std.mem.copy(u8, msg_copy, msg);
@@ -127,12 +140,17 @@ test "parse http message" {
     defer map.deinit();
     var msg_size = try parse_http_message(msg_copy, &map);
     try std.testing.expect(msg_size == msg.len);
-    var content_type = map.get("Content-Type") orelse "";
-    try std.testing.expect(std.mem.eql(u8, content_type, " application/json"));
-    var start_line = map.get("start_line") orelse "";
+    var content_type = map.get("Content-Type") orelse &[_]u8{};
+    try std.testing.expect(std.mem.eql(u8, content_type, "application/json"));
+    var start_line = map.get("start_line") orelse &[_]u8{};
     try std.testing.expect(std.mem.eql(u8, start_line, "POST / HTTP/1.1\r\n"));
 }
 
 test "env public key" {
     try std.testing.expect(env_vars.PUBLIC_KEY.len > 0);
+}
+
+test "libsodium" {
+    var sodium_init_res = libsodium.sodium_init();
+    try std.testing.expect(sodium_init_res != -1);
 }
