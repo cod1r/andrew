@@ -123,10 +123,10 @@ pub fn main() !void {
             std.debug.print("VERIFY STATUS: {}\n", .{verify});
             if (verify == -1) {
                 _ = try BAD_SIG(conn.stream);
+            } else {
+                _ = try ACK(conn.stream);
             }
         }
-        var sent_size = try ACK(conn.stream);
-        std.debug.print("send: {} bytes\n", .{sent_size});
         conn.stream.close();
     }
 }
