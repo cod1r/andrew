@@ -1,3 +1,5 @@
 zig
 zig-out/
 zig-cache/
+*.txt
+env_vars.zig
