@@ -12,6 +12,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("andrew", "src/main.zig");
+    exe.linkSystemLibrary("sodium");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
