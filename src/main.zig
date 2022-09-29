@@ -35,9 +35,6 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
     var index: usize = newline_start_line + 1;
     var read: usize = newline_start_line + 1;
     while (index < buff.len) {
-        if (index + 3 < buff.len and std.mem.eql(u8, buff[index..(index + 4)], "\r\n\r\n")) {
-            break;
-        }
         var key_end: usize = index;
         var newline_value_end: usize = index;
         var local_idx: usize = index;
@@ -88,14 +85,14 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
 // Acknowledging the PING request from Discord
 fn ACK(stream: std.net.Stream) !usize {
     return try stream.write(
-        "HTTP/1.1 200 \t\r\nContent-Length: 11\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"type\": 1}",
+        "HTTP/1.1 200 \r\nContent-Length: 11\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"type\": 1}",
     );
 }
 
 // Bad Signature
 fn BAD_SIG(stream: std.net.Stream) !usize {
     return try stream.write(
-        "HTTP/1.1 401 Unauthorized\t\r\nContent-Length: 25\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ninvalid request signature",
+        "HTTP/1.1 401 \r\nContent-Length: 25\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ninvalid request signature",
     );
 }
 
@@ -123,7 +120,7 @@ pub fn main() !void {
         var msg_size = try parse_http_message(msg, &map);
         if (map.get("method")) |method| {
             if (std.mem.eql(u8, method, "GET")) {
-                _ = try conn.stream.write("HTTP/1.1 200 \t\r\nContent-Length: 56\r\nContent-Type: text/html\r\n\r\n<h1>This is cod1r's zig discord bot interaction url</h1>");
+                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 56\r\nContent-Type: text/html\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
             } else if (std.mem.eql(u8, method, "POST")) {
                 var signature = map.get("X-Signature-Ed25519");
                 var timestamp = map.get("X-Signature-Timestamp");
@@ -185,4 +182,8 @@ test "parse http message" {
 
 test "env public key" {
     try std.testing.expect(env_vars.PUBLIC_KEY.len > 0);
+}
+
+test "utils" {
+    _ = utils;
 }
