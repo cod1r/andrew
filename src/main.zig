@@ -4,15 +4,28 @@ const libsodium = @cImport({
     @cInclude("sodium.h");
 });
 const utils = @import("utils.zig");
+const HTTP_Parse_Err = error{
+    InvalidHttpMessage,
+};
 fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
     var newline_start_line: usize = 0;
-    {
-        for (buff) |chr, idx| {
-            if (chr == '\n') {
-                newline_start_line = idx;
-                break;
-            }
+    for (buff) |chr, idx| {
+        if (chr == '\n') {
+            newline_start_line = idx;
+            break;
         }
+    }
+    var first_space: usize = 0;
+    for (buff) |chr, idx| {
+        if (chr == ' ') {
+            first_space = idx;
+            break;
+        }
+    }
+    if (first_space > 0) {
+        try map.put("method", buff[0..first_space]);
+    } else {
+        return HTTP_Parse_Err.InvalidHttpMessage;
     }
     if (newline_start_line > 0) {
         try map.put("start_line", buff[0..(newline_start_line + 1)]);
@@ -60,7 +73,7 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
             var value_beginning: usize = key_end + 1;
             if (buff[value_beginning] == ' ') value_beginning += 1;
             var value = try alloc.alloc(u8, buff.len - value_beginning);
-            std.mem.copy(u8, value, buff[value_beginning .. buff.len]);
+            std.mem.copy(u8, value, buff[value_beginning..buff.len]);
 
             try map.put(key, value);
             index = buff.len;
@@ -74,12 +87,16 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
 
 // Acknowledging the PING request from Discord
 fn ACK(stream: std.net.Stream) !usize {
-    return try stream.write("HTTP/1.1 200 \t\r\nContent-Length: 13\r\nContent-Type: application/json\r\n\r\n'{\"type\": 1}'");
+    return try stream.write(
+        "HTTP/1.1 200 \t\r\nContent-Length: 11\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"type\": 1}",
+    );
 }
 
 // Bad Signature
 fn BAD_SIG(stream: std.net.Stream) !usize {
-    return try stream.write("HTTP/1.1 401 \t\r\nContent-Length: 25\r\nContent-Type: text/plain\r\n\r\ninvalid request signature");
+    return try stream.write(
+        "HTTP/1.1 401 Unauthorized\t\r\nContent-Length: 25\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ninvalid request signature",
+    );
 }
 
 var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
@@ -104,40 +121,47 @@ pub fn main() !void {
         var map = std.StringHashMap([]u8).init(alloc);
         defer map.deinit();
         var msg_size = try parse_http_message(msg, &map);
-        var signature = map.get("X-Signature-Ed25519");
-        var timestamp = map.get("X-Signature-Timestamp");
-        if (signature != null and timestamp != null) {
-            // adding 2 because of the CRLF empty line
-            var body = msg[msg_size + 2 .. read_size];
-            // TODO: We need to consider the case that we don't get the full HTTP Message and Body
-            if (!std.json.validate(body)) {
-                @panic("NOT VALID JSON STRING");
-            }
-            var timestamp_body = try std.mem.concat(
-                alloc,
-                u8,
-                &[_][]u8{ timestamp.?, body },
-            );
-            defer alloc.free(timestamp_body);
+        if (map.get("method")) |method| {
+            if (std.mem.eql(u8, method, "GET")) {
+                _ = try conn.stream.write("HTTP/1.1 200 \t\r\nContent-Length: 56\r\nContent-Type: text/html\r\n\r\n<h1>This is cod1r's zig discord bot interaction url</h1>");
+            } else if (std.mem.eql(u8, method, "POST")) {
+                var signature = map.get("X-Signature-Ed25519");
+                var timestamp = map.get("X-Signature-Timestamp");
+                if (signature != null and timestamp != null) {
+                    // adding 2 because of the CRLF empty line
+                    var body = msg[msg_size + 2 .. read_size];
+                    // TODO: We need to consider the case that we don't get the full HTTP Message and Body
+                    if (!std.json.validate(body)) {
+                        @panic("NOT VALID JSON STRING");
+                    }
+                    var timestamp_body = try std.mem.concat(
+                        alloc,
+                        u8,
+                        &[_][]u8{ timestamp.?, body },
+                    );
+                    defer alloc.free(timestamp_body);
 
-            var sig_hex = try utils.fromHex(alloc, signature.?);
-            defer alloc.free(sig_hex);
+                    var sig_hex = try utils.fromHex(alloc, signature.?);
+                    defer alloc.free(sig_hex);
 
-            var public_key_hex = try utils.fromHex(alloc, env_vars.PUBLIC_KEY);
-            defer alloc.free(public_key_hex);
+                    var public_key_hex = try utils.fromHex(alloc, env_vars.PUBLIC_KEY);
+                    defer alloc.free(public_key_hex);
 
-            // verify request with libsodium
-            var verify = libsodium.crypto_sign_verify_detached(
-                @ptrCast([*c]const u8, sig_hex.ptr),
-                @ptrCast([*c]const u8, timestamp_body.ptr),
-                @intCast(c_ulonglong, timestamp_body.len),
-                @ptrCast([*c]const u8, public_key_hex.ptr),
-            );
-            std.debug.print("VERIFY STATUS: {}\n", .{verify});
-            if (verify == -1) {
-                _ = try BAD_SIG(conn.stream);
-            } else {
-                _ = try ACK(conn.stream);
+                    // verify request with libsodium
+                    var verify = libsodium.crypto_sign_verify_detached(
+                        @ptrCast([*c]const u8, sig_hex.ptr),
+                        @ptrCast([*c]const u8, timestamp_body.ptr),
+                        @intCast(c_ulonglong, timestamp_body.len),
+                        @ptrCast([*c]const u8, public_key_hex.ptr),
+                    );
+                    if (verify == -1) {
+                        var bad_sig_len = try BAD_SIG(conn.stream);
+                        if (bad_sig_len == 0) @panic("bad_sig_len 0");
+                    } else {
+                        var ack_len = try ACK(conn.stream);
+                        if (ack_len == 0) @panic("ack_len 0");
+                    }
+                }
             }
         }
         conn.stream.close();
@@ -162,4 +186,3 @@ test "parse http message" {
 test "env public key" {
     try std.testing.expect(env_vars.PUBLIC_KEY.len > 0);
 }
-
