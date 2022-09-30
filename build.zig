@@ -12,6 +12,11 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("andrew", "src/main.zig");
+    var path = std.os.getenv("PATH").?;
+    var splitIter = std.mem.split(u8, path, ":");
+    while (splitIter.next()) |split_path| {
+        exe.addIncludeDir(split_path);
+    }
     exe.linkSystemLibrary("sodium");
     exe.linkLibC();
     exe.setTarget(target);
