@@ -117,7 +117,9 @@ pub fn main() !void {
     }
     std.debug.print("libsodium initialized\n", .{});
     while (true) {
+        std.debug.print("before accepting\n", .{});
         var conn = try ss.accept();
+        std.debug.print("after accepting\n", .{});
         var buff: [655360]u8 = undefined;
         var read_size = try conn.stream.reader().readAll(buff[0..]);
         if (read_size > 0) {
