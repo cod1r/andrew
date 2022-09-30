@@ -99,7 +99,10 @@ var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
 var alloc = gpa.allocator();
 pub fn main() !void {
     defer _ = gpa.deinit();
-    const PORT = 8000;
+    const PORT = std.os.getenv("PORT").?;
+    if (PORT == null) {
+        @panic("PORT is null");
+    }
     const ip_address = "0.0.0.0";
     var add = try std.net.Address.parseIp(ip_address, PORT);
     var ss = std.net.StreamServer.init(.{});
