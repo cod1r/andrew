@@ -128,6 +128,7 @@ pub fn main() !void {
             var map = std.StringHashMap([]u8).init(alloc);
             defer map.deinit();
             var msg_size = try parse_http_message(msg, &map);
+            std.debug.print("done parsing http msg\n", .{});
             // adding 2 because of the CRLF empty line
             var body = msg[msg_size + 2 .. read_size];
             if (map.get("method")) |method| {
