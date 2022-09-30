@@ -49,6 +49,7 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
         if (key_end > index and newline_value_end > key_end + 1) {
             var key = try alloc.alloc(u8, key_end - index);
             std.mem.copy(u8, key, buff[index..key_end]);
+            utils.toLower(key);
 
             var value_beginning: usize = key_end + 1;
             var value_end: usize = newline_value_end;
@@ -65,6 +66,7 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
         } else if (key_end > index and newline_value_end <= key_end + 1) {
             var key = try alloc.alloc(u8, key_end - index);
             std.mem.copy(u8, key, buff[index..key_end]);
+            utils.toLower(key);
 
             var value_beginning: usize = key_end + 1;
             if (buff[value_beginning] == ' ') value_beginning += 1;
@@ -116,7 +118,7 @@ pub fn main() !void {
     std.debug.print("libsodium initialized\n", .{});
     while (true) {
         var conn = try ss.accept();
-        var buff: [65536]u8 = undefined;
+        var buff: [655360]u8 = undefined;
         var read_size = try conn.stream.reader().readAll(buff[0..]);
         if (read_size > 0) {
             var msg = buff[0..read_size];
@@ -130,7 +132,7 @@ pub fn main() !void {
                 if (std.mem.eql(u8, method, "GET")) {
                     try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 56\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
                 } else if (std.mem.eql(u8, method, "POST")) {
-                    if (std.mem.eql(u8, map.get("Content-Type").?, "application/json")) {
+                    if (std.mem.eql(u8, map.get("content-type").?, "application/json")) {
                         var parser = std.json.Parser.init(alloc, false);
                         defer parser.deinit();
                         var response_obj = try parser.parse(body);
@@ -138,8 +140,8 @@ pub fn main() !void {
                         switch (response_type) {
                             1 => {
                                 // PING response type
-                                var signature = map.get("X-Signature-Ed25519");
-                                var timestamp = map.get("X-Signature-Timestamp");
+                                var signature = map.get("x-signature-ed25519");
+                                var timestamp = map.get("x-signature-timestamp");
                                 var PUBLIC_KEY = std.os.getenv("andrew_bot_public_key");
                                 if (signature != null and timestamp != null and PUBLIC_KEY != null) {
                                     if (!std.json.validate(body)) {
@@ -191,6 +193,8 @@ pub fn main() !void {
                         }
                     }
                 }
+            } else {
+                try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
             }
         } else {
             try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
@@ -208,9 +212,9 @@ test "parse http message" {
     defer map.deinit();
     var msg_size = try parse_http_message(msg_copy, &map);
     try std.testing.expect(msg_size == msg.len);
-    var content_type = map.get("Content-Type") orelse &[_]u8{};
+    var content_type = map.get("content-type").?;
     try std.testing.expect(std.mem.eql(u8, content_type, "application/json"));
-    var start_line = map.get("start_line") orelse &[_]u8{};
+    var start_line = map.get("start_line").?;
     try std.testing.expect(std.mem.eql(u8, start_line, "POST / HTTP/1.1\r\n"));
 }
 

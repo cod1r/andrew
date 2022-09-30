@@ -7,6 +7,13 @@ pub fn check_newline_carriage_return(in: []u8) void {
         }
     }
 }
+pub fn toLower(str: []u8) void {
+    for (str) |*chr| {
+        if (chr.* >= 'A' and chr.* <= 'Z') {
+            chr.* += 32;
+        }
+    }
+}
 const HexConvertErr = error{InvalidHexString};
 pub fn fromHex(alloc: std.mem.Allocator, hexStr: []const u8) ![]u8 {
     // 2 because hex string shows each byte two characters
@@ -193,4 +200,10 @@ test "fromHex: signature2" {
     for (correct) |byte, idx| {
         try std.testing.expect(byte == slice[idx]);
     }
+}
+
+test "toLower" {
+    var str = [_]u8{'J', 'A', 'S', 'O', 'N'};
+    toLower(str[0..]);
+    try std.testing.expect(std.mem.eql(u8, str[0..], "jason"));
 }
