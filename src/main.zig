@@ -83,15 +83,15 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
 }
 
 // Acknowledging the PING request from Discord
-fn ACK(stream: std.net.Stream) !usize {
-    return try stream.write(
+fn ACK(stream: std.net.Stream) !void {
+    return try stream.writer().writeAll(
         "HTTP/1.1 200 \r\nContent-Length: 11\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"type\": 1}",
     );
 }
 
 // Bad Signature
-fn BAD_SIG(stream: std.net.Stream) !usize {
-    return try stream.write(
+fn BAD_SIG(stream: std.net.Stream) !void {
+    return try stream.writer().writeAll(
         "HTTP/1.1 401 \r\nContent-Length: 25\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\ninvalid request signature",
     );
 }
@@ -113,7 +113,7 @@ pub fn main() !void {
     while (true) {
         var conn = try ss.accept();
         var buff: [65536]u8 = undefined;
-        var read_size = try conn.stream.read(buff[0..]);
+        var read_size = try conn.stream.reader().readAll(buff[0..]);
         var msg = buff[0..read_size];
         var map = std.StringHashMap([]u8).init(alloc);
         defer map.deinit();
@@ -122,7 +122,7 @@ pub fn main() !void {
         var body = msg[msg_size + 2 .. read_size];
         if (map.get("method")) |method| {
             if (std.mem.eql(u8, method, "GET")) {
-                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 56\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
+                try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 56\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
             } else if (std.mem.eql(u8, method, "POST")) {
                 if (std.mem.eql(u8, map.get("Content-Type").?, "application/json")) {
                     var parser = std.json.Parser.init(alloc, false);
@@ -160,11 +160,9 @@ pub fn main() !void {
                                     @ptrCast([*c]const u8, public_key_hex.ptr),
                                 );
                                 if (verify == -1) {
-                                    var bad_sig_len = try BAD_SIG(conn.stream);
-                                    if (bad_sig_len == 0) @panic("bad_sig_len 0");
+                                    try BAD_SIG(conn.stream);
                                 } else {
-                                    var ack_len = try ACK(conn.stream);
-                                    if (ack_len == 0) @panic("ack_len 0");
+                                    try ACK(conn.stream);
                                 }
                             }
                         },
@@ -173,9 +171,9 @@ pub fn main() !void {
                             var interaction_data = response_obj.root.Object.get("data").?.Object;
                             var command_name = interaction_data.get("name").?.String;
                             if (std.mem.eql(u8, command_name, "test")) {
-                                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
+                                try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
                             } else if (std.mem.eql(u8, command_name, "greet")) {
-                                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
+                                try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
                             }
                         },
                         3 => {},
