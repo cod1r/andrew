@@ -1,5 +1,4 @@
 const std = @import("std");
-const env_vars = @import("env_vars.zig");
 const libsodium = @cImport({
     @cInclude("sodium.h");
 });
@@ -134,7 +133,8 @@ pub fn main() !void {
                             // PING response type
                             var signature = map.get("X-Signature-Ed25519");
                             var timestamp = map.get("X-Signature-Timestamp");
-                            if (signature != null and timestamp != null) {
+                            var PUBLIC_KEY = std.os.getenv("andrew_bot_public_key");
+                            if (signature != null and timestamp != null and PUBLIC_KEY != null) {
                                 if (!std.json.validate(body)) {
                                     @panic("NOT VALID JSON STRING");
                                 }
@@ -148,7 +148,7 @@ pub fn main() !void {
                                 var sig_hex = try utils.fromHex(alloc, signature.?);
                                 defer alloc.free(sig_hex);
 
-                                var public_key_hex = try utils.fromHex(alloc, env_vars.PUBLIC_KEY);
+                                var public_key_hex = try utils.fromHex(alloc, PUBLIC_KEY.?);
                                 defer alloc.free(public_key_hex);
 
                                 // verify request with libsodium
@@ -163,6 +163,8 @@ pub fn main() !void {
                                 } else {
                                     try ACK(conn.stream);
                                 }
+                            } else {
+                                try conn.stream.writer().writeAll("HTTP/1.1 500 \r\nContent-Length: 0\r\nContent-Type: text/plain\r\n\r\n");
                             }
                         },
                         2 => {
@@ -203,7 +205,7 @@ test "parse http message" {
 }
 
 test "env public key" {
-    try std.testing.expect(env_vars.PUBLIC_KEY.len > 0);
+    try std.testing.expect(std.os.getenv("andrew_bot_public_key").?.len > 0);
 }
 
 test "utils" {
