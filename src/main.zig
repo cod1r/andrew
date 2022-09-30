@@ -117,7 +117,7 @@ pub fn main() !void {
         var conn = try ss.accept();
         var buff: [655360]u8 = undefined;
         var read_size: usize = try conn.stream.reader().read(buff[0..]);
-        while (!utils.containsStr(buff[0..read_size], "\r\n\r\n")) {
+        while (!utils.containsStr(buff[0..read_size], "\r\n\r\n") and read_size > 0) {
             read_size += try conn.stream.reader().read(buff[read_size..]);
         }
         var msg = buff[0..read_size];
