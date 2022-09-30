@@ -14,6 +14,23 @@ pub fn toLower(str: []u8) void {
         }
     }
 }
+pub fn parseInt(str: []const u8) usize {
+    var res: usize = 0;
+    for (str) |chr, idx| {
+        res += (chr - '0') * (std.math.pow(u16, 10, @intCast(u16, str.len - 1 - idx)));
+    }
+    return res;
+}
+pub fn containsStr(str: []const u8, target: []const u8) bool {
+    var idx: usize = 0;
+    while (idx + target.len <= str.len and str.len >= target.len) {
+        if (std.mem.eql(u8, str[idx .. idx + target.len], target)) {
+            return true;
+        }
+        idx += 1;
+    }
+    return false;
+}
 const HexConvertErr = error{InvalidHexString};
 pub fn fromHex(alloc: std.mem.Allocator, hexStr: []const u8) ![]u8 {
     // 2 because hex string shows each byte two characters
@@ -206,4 +223,10 @@ test "toLower" {
     var str = [_]u8{'J', 'A', 'S', 'O', 'N'};
     toLower(str[0..]);
     try std.testing.expect(std.mem.eql(u8, str[0..], "jason"));
+}
+
+test "containsStr" {
+    try std.testing.expect(containsStr("\r\n\r\n", "\r\n\r\n"));
+    try std.testing.expect(containsStr("asdfasdfasdfasdfasdf\r\n\r\n", "\r\n\r\n"));
+    try std.testing.expect(containsStr("asdfasdfasdfasdfasdf\r\n\r\nsdfasdfasdfasdfsdf", "\r\n\r\n"));
 }

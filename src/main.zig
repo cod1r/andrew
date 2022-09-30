@@ -103,10 +103,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const PORT_env = std.os.getenv("PORT").?;
     const ip_address = "0.0.0.0";
-    var PORT: u16 = 0;
-    for (PORT_env) |chr, idx| {
-        PORT += (chr - '0') * (std.math.pow(u16, 10, @intCast(u16, PORT_env.len - 1 - idx)));
-    }
+    var PORT: u16 = @intCast(u16, utils.parseInt(PORT_env));
     var add = try std.net.Address.parseIp(ip_address, PORT);
     var ss = std.net.StreamServer.init(.{});
     defer ss.deinit();
@@ -117,18 +114,28 @@ pub fn main() !void {
     }
     std.debug.print("libsodium initialized\n", .{});
     while (true) {
-        std.debug.print("before accepting\n", .{});
         var conn = try ss.accept();
-        std.debug.print("after accepting\n", .{});
         var buff: [655360]u8 = undefined;
-        var read_size = try conn.stream.reader().readAll(buff[0..]);
+        var read_size: usize = try conn.stream.reader().read(buff[0..]);
+        while (!utils.containsStr(buff[0..read_size], "\r\n\r\n")) {
+            read_size += try conn.stream.reader().read(buff[read_size..]);
+        }
+        var msg = buff[0..read_size];
+        var map = std.StringHashMap([]u8).init(alloc);
+        defer map.deinit();
+        var msg_size = try parse_http_message(msg, &map);
+        var content_length = map.get("content-length");
+        if (content_length) |cl| {
+            var content_length_number: usize = utils.parseInt(cl);
+            if (read_size - (msg_size + 2) < content_length_number) {
+                var read_body = try conn.stream.reader().read(buff[read_size..]);
+                while (read_body < content_length_number) {
+                    read_body += try conn.stream.reader().read(buff[read_size + read_body ..]);
+                }
+                read_size += read_body;
+            }
+        }
         if (read_size > 0) {
-            var msg = buff[0..read_size];
-            std.debug.print("{s}\n", .{msg});
-            var map = std.StringHashMap([]u8).init(alloc);
-            defer map.deinit();
-            var msg_size = try parse_http_message(msg, &map);
-            std.debug.print("done parsing http msg\n", .{});
             // adding 2 because of the CRLF empty line
             var body = msg[msg_size + 2 .. read_size];
             if (map.get("method")) |method| {
@@ -194,13 +201,11 @@ pub fn main() !void {
                             5 => {},
                             else => {},
                         }
+                    } else {
+                        try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
                     }
                 }
-            } else {
-                try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
             }
-        } else {
-            try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
         }
         conn.stream.close();
     }
