@@ -171,8 +171,12 @@ pub fn main() !void {
                         2 => {
                             // APPLICATION COMMAND response type
                             var interaction_data = response_obj.root.Object.get("data").?.Object;
-                            std.debug.print("{s}\n", .{interaction_data.get("name").?.String});
-                            _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
+                            var command_name = interaction_data.get("name").?.String;
+                            if (std.mem.eql(u8, command_name, "test")) {
+                                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
+                            } else if (std.mem.eql(u8, command_name, "greet")) {
+                                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
+                            }
                         },
                         3 => {},
                         4 => {},
