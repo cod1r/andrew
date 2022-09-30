@@ -120,22 +120,22 @@ pub fn main() !void {
         while (!utils.containsStr(buff[0..read_size], "\r\n\r\n") and read_size > 0) {
             read_size += try conn.stream.reader().read(buff[read_size..]);
         }
-        var msg = buff[0..read_size];
-        var map = std.StringHashMap([]u8).init(alloc);
-        defer map.deinit();
-        var msg_size = try parse_http_message(msg, &map);
-        var content_length = map.get("content-length");
-        if (content_length) |cl| {
-            var content_length_number: usize = utils.parseInt(cl);
-            if (read_size - (msg_size + 2) < content_length_number) {
-                var read_body = try conn.stream.reader().read(buff[read_size..]);
-                while (read_body < content_length_number) {
-                    read_body += try conn.stream.reader().read(buff[read_size + read_body ..]);
-                }
-                read_size += read_body;
-            }
-        }
         if (read_size > 0) {
+            var msg = buff[0..read_size];
+            var map = std.StringHashMap([]u8).init(alloc);
+            defer map.deinit();
+            var msg_size = try parse_http_message(msg, &map);
+            var content_length = map.get("content-length");
+            if (content_length) |cl| {
+                var content_length_number: usize = utils.parseInt(cl);
+                if (read_size - (msg_size + 2) < content_length_number) {
+                    var read_body = try conn.stream.reader().read(buff[read_size..]);
+                    while (read_body < content_length_number) {
+                        read_body += try conn.stream.reader().read(buff[read_size + read_body ..]);
+                    }
+                    read_size += read_body;
+                }
+            }
             // adding 2 because of the CRLF empty line
             var body = msg[msg_size + 2 .. read_size];
             if (map.get("method")) |method| {

@@ -220,7 +220,7 @@ test "fromHex: signature2" {
 }
 
 test "toLower" {
-    var str = [_]u8{'J', 'A', 'S', 'O', 'N'};
+    var str = [_]u8{ 'J', 'A', 'S', 'O', 'N' };
     toLower(str[0..]);
     try std.testing.expect(std.mem.eql(u8, str[0..], "jason"));
 }
