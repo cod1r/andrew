@@ -12,18 +12,6 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("andrew", "src/main.zig");
-    var path = std.os.getenv("PATH").?;
-    var splitIter = std.mem.split(u8, path, ":");
-    var yes = false;
-    while (splitIter.next()) |split_path| {
-        if (std.mem.containsAtLeast(u8, split_path, 1, "libsodium")) {
-            yes = true;
-        }
-        exe.addIncludeDir(split_path);
-    }
-    if (!yes) {
-        @panic("no libsodium in path");
-    }
     exe.linkSystemLibrary("sodium");
     exe.linkLibC();
     exe.setTarget(target);
