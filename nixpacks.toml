@@ -1,2 +1,2 @@
 [phases.setup]
-nixPkgs = ['zig', 'gcc', 'libsodium']
+nixPkgs = ['zig', 'gcc', 'libsodium', 'pkg-config']
