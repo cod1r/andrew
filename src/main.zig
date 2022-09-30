@@ -191,6 +191,8 @@ pub fn main() !void {
                     }
                 }
             }
+        } else {
+            try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
         }
         conn.stream.close();
     }
