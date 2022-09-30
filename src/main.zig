@@ -118,9 +118,9 @@ pub fn main() !void {
         var conn = try ss.accept();
         var buff: [65536]u8 = undefined;
         var read_size = try conn.stream.reader().readAll(buff[0..]);
-        std.debug.print("{}\n", .{read_size});
         if (read_size > 0) {
             var msg = buff[0..read_size];
+            std.debug.print("{s}\n", .{msg});
             var map = std.StringHashMap([]u8).init(alloc);
             defer map.deinit();
             var msg_size = try parse_http_message(msg, &map);
