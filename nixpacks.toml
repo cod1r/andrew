@@ -1,5 +1,6 @@
 [phases.setup]
 nixPkgs = ['zig', 'gcc', 'libsodium']
-[phases.install]
-cmds = ['nix-env -iA nixos.libsodium']
-
+[phases.build]
+cmds = ['zig build']
+[start]
+cmd = 'zig build run'
