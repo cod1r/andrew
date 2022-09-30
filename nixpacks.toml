@@ -1,2 +1,5 @@
 [phases.setup]
-nixPkgs = ['zig', 'gcc', 'libsodium', 'pkg-config']
+nixPkgs = ['zig', 'gcc', 'libsodium']
+[phases.install]
+cmds = ['nix-env -iA nixos.libsodium']
+

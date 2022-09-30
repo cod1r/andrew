@@ -100,7 +100,8 @@ var alloc = gpa.allocator();
 pub fn main() !void {
     defer _ = gpa.deinit();
     const PORT = 8000;
-    var add = try std.net.Address.parseIp("127.0.0.1", PORT);
+    const ip_address = "0.0.0.0";
+    var add = try std.net.Address.parseIp(ip_address, PORT);
     var ss = std.net.StreamServer.init(.{});
     defer ss.deinit();
     try ss.listen(add);
