@@ -135,7 +135,6 @@ pub fn main() !void {
                             var signature = map.get("X-Signature-Ed25519");
                             var timestamp = map.get("X-Signature-Timestamp");
                             if (signature != null and timestamp != null) {
-                                // TODO: We need to consider the case that we don't get the full HTTP Message and Body
                                 if (!std.json.validate(body)) {
                                     @panic("NOT VALID JSON STRING");
                                 }
