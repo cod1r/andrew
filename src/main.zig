@@ -99,11 +99,12 @@ var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
 var alloc = gpa.allocator();
 pub fn main() !void {
     defer _ = gpa.deinit();
-    const PORT = std.os.getenv("PORT").?;
-    if (PORT == null) {
-        @panic("PORT is null");
-    }
+    const PORT_env = std.os.getenv("PORT").?;
     const ip_address = "0.0.0.0";
+    var PORT: u16 = 0;
+    for (PORT_env) |chr, idx| {
+        PORT += (chr - '0') * (std.math.pow(u16, 10, @intCast(u16, PORT_env.len - 1 - idx)));
+    }
     var add = try std.net.Address.parseIp(ip_address, PORT);
     var ss = std.net.StreamServer.init(.{});
     defer ss.deinit();
