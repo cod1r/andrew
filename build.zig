@@ -12,7 +12,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("andrew", "src/main.zig");
-    exe.addIncludeDir(".");
+    exe.addIncludeDir("/nix/store");
     exe.linkSystemLibrary("sodium");
     exe.linkLibC();
     exe.setTarget(target);
