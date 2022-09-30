@@ -1,2 +1,5 @@
 [phases.setup]
 nixPkgs = ['zig', 'gcc', 'libsodium']
+aptPkgs = ['libsodium-dev']
+[start]
+cmd = './zig-out/bin/andrew'
