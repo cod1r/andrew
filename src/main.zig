@@ -118,45 +118,66 @@ pub fn main() !void {
         var map = std.StringHashMap([]u8).init(alloc);
         defer map.deinit();
         var msg_size = try parse_http_message(msg, &map);
+        // adding 2 because of the CRLF empty line
+        var body = msg[msg_size + 2 .. read_size];
         if (map.get("method")) |method| {
             if (std.mem.eql(u8, method, "GET")) {
-                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 56\r\nContent-Type: text/html\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
+                _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 56\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
             } else if (std.mem.eql(u8, method, "POST")) {
-                var signature = map.get("X-Signature-Ed25519");
-                var timestamp = map.get("X-Signature-Timestamp");
-                if (signature != null and timestamp != null) {
-                    // adding 2 because of the CRLF empty line
-                    var body = msg[msg_size + 2 .. read_size];
-                    // TODO: We need to consider the case that we don't get the full HTTP Message and Body
-                    if (!std.json.validate(body)) {
-                        @panic("NOT VALID JSON STRING");
-                    }
-                    var timestamp_body = try std.mem.concat(
-                        alloc,
-                        u8,
-                        &[_][]u8{ timestamp.?, body },
-                    );
-                    defer alloc.free(timestamp_body);
+                if (std.mem.eql(u8, map.get("Content-Type").?, "application/json")) {
+                    var parser = std.json.Parser.init(alloc, false);
+                    defer parser.deinit();
+                    var response_obj = try parser.parse(body);
+                    var response_type = response_obj.root.Object.get("type").?.Integer;
+                    switch (response_type) {
+                        1 => {
+                            // PING response type
+                            var signature = map.get("X-Signature-Ed25519");
+                            var timestamp = map.get("X-Signature-Timestamp");
+                            if (signature != null and timestamp != null) {
+                                // TODO: We need to consider the case that we don't get the full HTTP Message and Body
+                                if (!std.json.validate(body)) {
+                                    @panic("NOT VALID JSON STRING");
+                                }
+                                var timestamp_body = try std.mem.concat(
+                                    alloc,
+                                    u8,
+                                    &[_][]u8{ timestamp.?, body },
+                                );
+                                defer alloc.free(timestamp_body);
 
-                    var sig_hex = try utils.fromHex(alloc, signature.?);
-                    defer alloc.free(sig_hex);
+                                var sig_hex = try utils.fromHex(alloc, signature.?);
+                                defer alloc.free(sig_hex);
 
-                    var public_key_hex = try utils.fromHex(alloc, env_vars.PUBLIC_KEY);
-                    defer alloc.free(public_key_hex);
+                                var public_key_hex = try utils.fromHex(alloc, env_vars.PUBLIC_KEY);
+                                defer alloc.free(public_key_hex);
 
-                    // verify request with libsodium
-                    var verify = libsodium.crypto_sign_verify_detached(
-                        @ptrCast([*c]const u8, sig_hex.ptr),
-                        @ptrCast([*c]const u8, timestamp_body.ptr),
-                        @intCast(c_ulonglong, timestamp_body.len),
-                        @ptrCast([*c]const u8, public_key_hex.ptr),
-                    );
-                    if (verify == -1) {
-                        var bad_sig_len = try BAD_SIG(conn.stream);
-                        if (bad_sig_len == 0) @panic("bad_sig_len 0");
-                    } else {
-                        var ack_len = try ACK(conn.stream);
-                        if (ack_len == 0) @panic("ack_len 0");
+                                // verify request with libsodium
+                                var verify = libsodium.crypto_sign_verify_detached(
+                                    @ptrCast([*c]const u8, sig_hex.ptr),
+                                    @ptrCast([*c]const u8, timestamp_body.ptr),
+                                    @intCast(c_ulonglong, timestamp_body.len),
+                                    @ptrCast([*c]const u8, public_key_hex.ptr),
+                                );
+                                if (verify == -1) {
+                                    var bad_sig_len = try BAD_SIG(conn.stream);
+                                    if (bad_sig_len == 0) @panic("bad_sig_len 0");
+                                } else {
+                                    var ack_len = try ACK(conn.stream);
+                                    if (ack_len == 0) @panic("ack_len 0");
+                                }
+                            }
+                        },
+                        2 => {
+                            // APPLICATION COMMAND response type
+                            var interaction_data = response_obj.root.Object.get("data").?.Object;
+                            std.debug.print("{s}\n", .{interaction_data.get("name").?.String});
+                            _ = try conn.stream.write("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
+                        },
+                        3 => {},
+                        4 => {},
+                        5 => {},
+                        else => {},
                     }
                 }
             }
