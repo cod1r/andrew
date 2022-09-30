@@ -1,6 +1,2 @@
 [phases.setup]
 nixPkgs = ['zig', 'gcc', 'libsodium']
-[phases.build]
-cmds = ['zig build']
-[start]
-cmd = 'zig build run'
