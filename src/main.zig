@@ -24,7 +24,7 @@ fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
     if (first_space > 0) {
         try map.put("method", buff[0..first_space]);
     } else {
-        std.debug.print("{s}\n", .{buff[0..]});
+        std.debug.print("buff: {s}\n", .{buff[0..]});
         return HTTP_Parse_Err.InvalidHttpMessage;
     }
     if (newline_start_line > 0) {
