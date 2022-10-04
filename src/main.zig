@@ -124,88 +124,91 @@ pub fn main() !void {
             var msg = buff[0..read_size];
             var map = std.StringHashMap([]u8).init(alloc);
             defer map.deinit();
-            var msg_size = try parse_http_message(msg, &map);
-            var content_length = map.get("content-length");
-            if (content_length) |cl| {
-                var content_length_number: usize = utils.parseInt(cl);
-                if (read_size - (msg_size + 2) < content_length_number) {
-                    var read_body = try conn.stream.reader().read(buff[read_size..]);
-                    while (read_body < content_length_number) {
-                        read_body += try conn.stream.reader().read(buff[read_size + read_body ..]);
-                    }
-                    read_size += read_body;
-                }
-            }
-            // adding 2 because of the CRLF empty line
-            var body = msg[msg_size + 2 .. read_size];
-            if (map.get("method")) |method| {
-                if (std.mem.eql(u8, method, "GET")) {
-                    try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 56\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
-                } else if (std.mem.eql(u8, method, "POST")) {
-                    if (std.mem.eql(u8, map.get("content-type").?, "application/json")) {
-                        var parser = std.json.Parser.init(alloc, false);
-                        defer parser.deinit();
-                        var response_obj = try parser.parse(body);
-                        var response_type = response_obj.root.Object.get("type").?.Integer;
-                        switch (response_type) {
-                            1 => {
-                                // PING response type
-                                var signature = map.get("x-signature-ed25519");
-                                var timestamp = map.get("x-signature-timestamp");
-                                var PUBLIC_KEY = std.os.getenv("andrew_bot_public_key");
-                                if (signature != null and timestamp != null and PUBLIC_KEY != null) {
-                                    if (!std.json.validate(body)) {
-                                        @panic("NOT VALID JSON STRING");
-                                    }
-                                    var timestamp_body = try std.mem.concat(
-                                        alloc,
-                                        u8,
-                                        &[_][]u8{ timestamp.?, body },
-                                    );
-                                    defer alloc.free(timestamp_body);
-
-                                    var sig_hex = try utils.fromHex(alloc, signature.?);
-                                    defer alloc.free(sig_hex);
-
-                                    var public_key_hex = try utils.fromHex(alloc, PUBLIC_KEY.?);
-                                    defer alloc.free(public_key_hex);
-
-                                    // verify request with libsodium
-                                    var verify = libsodium.crypto_sign_verify_detached(
-                                        @ptrCast([*c]const u8, sig_hex.ptr),
-                                        @ptrCast([*c]const u8, timestamp_body.ptr),
-                                        @intCast(c_ulonglong, timestamp_body.len),
-                                        @ptrCast([*c]const u8, public_key_hex.ptr),
-                                    );
-                                    if (verify == -1) {
-                                        try BAD_SIG(conn.stream);
-                                    } else {
-                                        try ACK(conn.stream);
-                                    }
-                                } else {
-                                    try conn.stream.writer().writeAll("HTTP/1.1 500 \r\nContent-Length: 0\r\nContent-Type: text/plain\r\n\r\n");
-                                }
-                            },
-                            2 => {
-                                // APPLICATION COMMAND response type
-                                var interaction_data = response_obj.root.Object.get("data").?.Object;
-                                var command_name = interaction_data.get("name").?.String;
-                                if (std.mem.eql(u8, command_name, "test")) {
-                                    try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
-                                } else if (std.mem.eql(u8, command_name, "greet")) {
-                                    try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
-                                }
-                            },
-                            3 => {},
-                            4 => {},
-                            5 => {},
-                            else => {},
+            var msg_size = parse_http_message(msg, &map);
+            if (msg_size) |parsed_msg_size| {
+                var content_length = map.get("content-length");
+                if (content_length) |cl| {
+                    var content_length_number: usize = utils.parseInt(cl);
+                    if (read_size - (parsed_msg_size + 2) < content_length_number) {
+                        var read_body = try conn.stream.reader().read(buff[read_size..]);
+                        while (read_body < content_length_number) {
+                            read_body += try conn.stream.reader().read(buff[read_size + read_body ..]);
                         }
-                    } else {
-                        try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
+                        read_size += read_body;
                     }
                 }
-            }
+                // adding 2 because of the CRLF empty line
+                var body = msg[parsed_msg_size + 2 .. read_size];
+                if (map.get("method")) |method| {
+                    if (std.mem.eql(u8, method, "GET")) {
+                        try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 40\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
+                    } else if (std.mem.eql(u8, method, "POST")) {
+                        if (std.mem.eql(u8, map.get("content-type").?, "application/json")) {
+                            var parser = std.json.Parser.init(alloc, false);
+                            defer parser.deinit();
+                            if (std.json.validate(body)) {
+                                var response_obj = try parser.parse(body);
+                                var response_type = response_obj.root.Object.get("type").?.Integer;
+                                switch (response_type) {
+                                    1 => {
+                                        // PING response type
+                                        var signature = map.get("x-signature-ed25519");
+                                        var timestamp = map.get("x-signature-timestamp");
+                                        var PUBLIC_KEY = std.os.getenv("andrew_bot_public_key");
+                                        if (signature != null and timestamp != null and PUBLIC_KEY != null) {
+                                            var timestamp_body = try std.mem.concat(
+                                                alloc,
+                                                u8,
+                                                &[_][]u8{ timestamp.?, body },
+                                            );
+                                            defer alloc.free(timestamp_body);
+
+                                            var sig_hex = utils.fromHex(alloc, signature.?);
+                                            var public_key_hex = utils.fromHex(alloc, PUBLIC_KEY.?);
+                                            if (sig_hex) |signature_hex| {
+                                                defer alloc.free(signature_hex);
+                                                if (public_key_hex) |pc_hex| {
+                                                    defer alloc.free(pc_hex);
+                                                    // verify request with libsodium
+                                                    var verify = libsodium.crypto_sign_verify_detached(
+                                                        @ptrCast([*c]const u8, signature_hex.ptr),
+                                                        @ptrCast([*c]const u8, timestamp_body.ptr),
+                                                        @intCast(c_ulonglong, timestamp_body.len),
+                                                        @ptrCast([*c]const u8, pc_hex.ptr),
+                                                    );
+                                                    if (verify == -1) {
+                                                        try BAD_SIG(conn.stream);
+                                                    } else {
+                                                        try ACK(conn.stream);
+                                                    }
+                                                } else |_| {}
+                                            } else |_| {}
+                                        } else {
+                                            try conn.stream.writer().writeAll("HTTP/1.1 500 \r\nContent-Length: 0\r\nContent-Type: text/plain\r\n\r\n");
+                                        }
+                                    },
+                                    2 => {
+                                        // APPLICATION COMMAND response type
+                                        var interaction_data = response_obj.root.Object.get("data").?.Object;
+                                        var command_name = interaction_data.get("name").?.String;
+                                        if (std.mem.eql(u8, command_name, "test")) {
+                                            try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
+                                        } else if (std.mem.eql(u8, command_name, "greet")) {
+                                            try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
+                                        }
+                                    },
+                                    3 => {},
+                                    4 => {},
+                                    5 => {},
+                                    else => {},
+                                }
+                            }
+                        } else {
+                            try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n");
+                        }
+                    }
+                }
+            } else |_| {}
         }
         conn.stream.close();
     }
