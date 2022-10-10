@@ -1,4 +1,186 @@
 const std = @import("std");
+const HTTP_Parse_Err = error{
+    InvalidHttpMessage,
+    ChunkLengthTooBig,
+};
+pub fn get_chunk_size(buff: []u8) !usize {
+    if (buff.len == 0) return 0;
+    var size: usize = 0;
+    for (buff) |_, index| {
+        if (buff[index] == ';' or (index + 1 < buff.len and buff[index] == '\r' and buff[index + 1] == '\n')) {
+            var idx: usize = 0;
+            while (idx < index) {
+                switch (buff[idx]) {
+                    '0'...'9' => size += (buff[idx] - '0') * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
+                    'a'...'f' => size += (10 + (buff[idx] - 'a')) * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
+                    else => {},
+                }
+                switch (buff[idx + 1]) {
+                    '0'...'9' => size += (buff[idx + 1] - '0') * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
+                    'a'...'f' => size += (10 + (buff[idx + 1] - 'a')) * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
+                    else => {},
+                }
+            }
+            break;
+        }
+    }
+    return size;
+}
+
+pub fn handle_chunks(alloc: std.mem.Allocator, stream: std.net.Stream, initial_buff: []u8) ![]u8 {
+    var chunked_bodies = std.ArrayList(u8).init(alloc);
+    var read_buffer: [10000]u8 = undefined;
+    if (initial_buff.len > 0) {
+        try chunked_bodies.appendSlice(initial_buff[0..]);
+    }
+    const chunk_part = enum { chunk_size, chunk_data, chunk_last_chunk, chunk_trailer };
+    var state: chunk_part = .chunk_size;
+    var chunked_idx: usize = 0;
+    while (true) {
+        switch (state) {
+            .chunk_size => {
+                while (std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n") == null) {
+                    var bytes_read = try stream.read(read_buffer[0..]);
+                    if (bytes_read > 0) {
+                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
+                    }
+                }
+                if (std.mem.indexOf(u8, chunked_bodies.items[0..], "\r\n")) |end_index| {
+                    var parsed_size = try get_chunk_size(chunked_bodies.items[0..end_index]);
+                    if (parsed_size > 0) {
+                        state = .chunk_data;
+                        chunked_idx = end_index + 1;
+                    } else {
+                        break;
+                    }
+                }
+            },
+            .chunk_data => {
+                while (!std.mem.containsAtLeast(u8, chunked_bodies.items[chunked_idx .. ], 1, "\r\n")) {
+                    var bytes_read = try stream.read(read_buffer[0..]);
+                    if (bytes_read > 0) {
+                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
+                    }
+                }
+                var second_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
+                if (second_crlf) |crlf| {
+                    state = .chunk_last_chunk;
+                    chunked_idx = crlf + 1;
+                }
+            },
+            .chunk_last_chunk => {
+                while (!std.mem.containsAtLeast(u8, chunked_bodies.items[chunked_idx ..], 1, "\r\n")) {
+                    var bytes_read = try stream.read(read_buffer[0..]);
+                    if (bytes_read > 0) {
+                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
+                    }
+                }
+                var third_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
+                if (third_crlf) |crlf| {
+                    state = .chunk_trailer;
+                    chunked_idx = crlf + 1;
+                }
+            },
+            .chunk_trailer => {
+                // we are going to ignore trailer fields
+                while (!std.mem.containsAtLeast(u8, chunked_bodies.items[chunked_idx ..], 1, "\r\n")) {
+                    var bytes_read = try stream.read(read_buffer[0..]);
+                    if (bytes_read > 0) {
+                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
+                    }
+                }
+                var final_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
+                if (final_crlf) |crlf| {
+                    chunked_idx = crlf + 3;
+                    break;
+                }
+            },
+        }
+    }
+    // TODO: process chunked bytes and get the actual chunk data and parse into JSON
+    return chunked_bodies.items;
+}
+
+pub fn read_header(buff: []u8, stream: std.net.Stream) !usize {
+    var headers_read_size: usize = try stream.reader().read(buff[0..]);
+    while (!containsStr(buff[0..headers_read_size], "\r\n\r\n") and headers_read_size > 0) {
+        headers_read_size += try stream.reader().read(buff[headers_read_size..]);
+    }
+    return headers_read_size;
+}
+
+pub fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
+    var newline_start_line: usize = 0;
+    for (buff) |chr, idx| {
+        if (chr == '\n') {
+            newline_start_line = idx;
+            break;
+        }
+    }
+    var first_space: usize = 0;
+    for (buff) |chr, idx| {
+        if (chr == ' ') {
+            first_space = idx;
+            break;
+        }
+    }
+    if (first_space > 0) {
+        try map.put("method", buff[0..first_space]);
+    } else {
+        return HTTP_Parse_Err.InvalidHttpMessage;
+    }
+    if (newline_start_line > 0) {
+        try map.put("start_line", buff[0..(newline_start_line + 1)]);
+    } else {
+        try map.put("start_line", buff[0..]);
+    }
+    var index: usize = newline_start_line + 1;
+    var read: usize = newline_start_line + 1;
+    while (index < buff.len) {
+        var key_end: usize = index;
+        var newline_value_end: usize = index;
+        var local_idx: usize = index;
+        while (local_idx < buff.len) : (local_idx += 1) {
+            if (buff[local_idx] == ':') {
+                key_end = local_idx;
+            } else if (buff[local_idx] == '\n') {
+                // msg could not have newline character
+                newline_value_end = local_idx;
+                break;
+            }
+        }
+        if (key_end > index and newline_value_end > key_end + 1) {
+            var key = buff[index..key_end];
+            toLower(key);
+
+            var value_beginning: usize = key_end + 1;
+            var value_end: usize = newline_value_end;
+            if (buff[value_beginning] == ' ') value_beginning += 1;
+            while (buff[value_end] == '\r' or buff[value_end] == ' ' or buff[value_end] == '\n') {
+                value_end -= 1;
+            }
+            var value = buff[value_beginning .. value_end + 1];
+
+            try map.put(key, value);
+            index = newline_value_end + 1;
+            read += (newline_value_end + 1 - read);
+        } else if (key_end > index and newline_value_end <= key_end + 1) {
+            var key = buff[index..key_end];
+            toLower(key);
+
+            var value_beginning: usize = key_end + 1;
+            if (buff[value_beginning] == ' ') value_beginning += 1;
+            var value = buff[value_beginning..buff.len];
+
+            try map.put(key, value);
+            index = buff.len;
+            read += (buff.len - read);
+        } else {
+            break;
+        }
+    }
+    return read;
+}
 
 pub fn check_newline_carriage_return(in: []u8) void {
     for (in) |chr| {
@@ -229,4 +411,20 @@ test "containsStr" {
     try std.testing.expect(containsStr("\r\n\r\n", "\r\n\r\n"));
     try std.testing.expect(containsStr("asdfasdfasdfasdfasdf\r\n\r\n", "\r\n\r\n"));
     try std.testing.expect(containsStr("asdfasdfasdfasdfasdf\r\n\r\nsdfasdfasdfasdfsdf", "\r\n\r\n"));
+}
+
+test "parse http message" {
+    var alloc = std.testing.allocator;
+    var msg: []const u8 = "POST / HTTP/1.1\r\nContent-Type: application/json\r\n";
+    var msg_copy = try alloc.alloc(u8, msg.len);
+    defer alloc.free(msg_copy);
+    std.mem.copy(u8, msg_copy, msg);
+    var map = std.StringHashMap([]u8).init(alloc);
+    defer map.deinit();
+    var msg_size = try parse_http_message(msg_copy, &map);
+    try std.testing.expect(msg_size == msg.len);
+    var content_type = map.get("content-type").?;
+    try std.testing.expect(std.mem.eql(u8, content_type, "application/json"));
+    var start_line = map.get("start_line").?;
+    try std.testing.expect(std.mem.eql(u8, start_line, "POST / HTTP/1.1\r\n"));
 }

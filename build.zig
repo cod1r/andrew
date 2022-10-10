@@ -13,6 +13,8 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe = b.addExecutable("andrew", "src/main.zig");
     exe.linkSystemLibrary("sodium");
+    exe.linkSystemLibrary("ssl");
+    exe.linkSystemLibrary("crypto");
     exe.linkLibC();
     exe.setTarget(target);
     exe.setBuildMode(mode);
@@ -29,7 +31,9 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe_tests = b.addTest("src/main.zig");
     exe_tests.linkLibC();
+    exe.linkSystemLibrary("ssl");
     exe_tests.linkSystemLibrary("sodium");
+    exe.linkSystemLibrary("crypto");
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
 

@@ -2,86 +2,11 @@ const std = @import("std");
 const libsodium = @cImport({
     @cInclude("sodium.h");
 });
+const openssl = @cImport({
+    @cInclude("openssl/ssl.h");
+    @cInclude("openssl/bio.h");
+});
 const utils = @import("utils.zig");
-const HTTP_Parse_Err = error{
-    InvalidHttpMessage,
-};
-fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
-    var newline_start_line: usize = 0;
-    for (buff) |chr, idx| {
-        if (chr == '\n') {
-            newline_start_line = idx;
-            break;
-        }
-    }
-    var first_space: usize = 0;
-    for (buff) |chr, idx| {
-        if (chr == ' ') {
-            first_space = idx;
-            break;
-        }
-    }
-    if (first_space > 0) {
-        try map.put("method", buff[0..first_space]);
-    } else {
-        return HTTP_Parse_Err.InvalidHttpMessage;
-    }
-    if (newline_start_line > 0) {
-        try map.put("start_line", buff[0..(newline_start_line + 1)]);
-    } else {
-        try map.put("start_line", buff[0..]);
-    }
-    var index: usize = newline_start_line + 1;
-    var read: usize = newline_start_line + 1;
-    while (index < buff.len) {
-        var key_end: usize = index;
-        var newline_value_end: usize = index;
-        var local_idx: usize = index;
-        while (local_idx < buff.len) : (local_idx += 1) {
-            if (buff[local_idx] == ':') {
-                key_end = local_idx;
-            } else if (buff[local_idx] == '\n') {
-                // msg could not have newline character
-                newline_value_end = local_idx;
-                break;
-            }
-        }
-        if (key_end > index and newline_value_end > key_end + 1) {
-            var key = try alloc.alloc(u8, key_end - index);
-            std.mem.copy(u8, key, buff[index..key_end]);
-            utils.toLower(key);
-
-            var value_beginning: usize = key_end + 1;
-            var value_end: usize = newline_value_end;
-            if (buff[value_beginning] == ' ') value_beginning += 1;
-            while (buff[value_end] == '\r' or buff[value_end] == ' ' or buff[value_end] == '\n') {
-                value_end -= 1;
-            }
-            var value = try alloc.alloc(u8, value_end - value_beginning + 1);
-            std.mem.copy(u8, value, buff[value_beginning .. value_end + 1]);
-
-            try map.put(key, value);
-            index = newline_value_end + 1;
-            read += (newline_value_end + 1 - read);
-        } else if (key_end > index and newline_value_end <= key_end + 1) {
-            var key = try alloc.alloc(u8, key_end - index);
-            std.mem.copy(u8, key, buff[index..key_end]);
-            utils.toLower(key);
-
-            var value_beginning: usize = key_end + 1;
-            if (buff[value_beginning] == ' ') value_beginning += 1;
-            var value = try alloc.alloc(u8, buff.len - value_beginning);
-            std.mem.copy(u8, value, buff[value_beginning..buff.len]);
-
-            try map.put(key, value);
-            index = buff.len;
-            read += (buff.len - read);
-        } else {
-            break;
-        }
-    }
-    return read;
-}
 
 // Acknowledging the PING request from Discord
 fn ACK(stream: std.net.Stream) !void {
@@ -108,37 +33,36 @@ pub fn main() !void {
     var ss = std.net.StreamServer.init(.{});
     defer ss.deinit();
     try ss.listen(add);
-    std.debug.print("listening on port {}\n", .{PORT});
     if (libsodium.sodium_init() < 0) {
         @panic("libsodium cannot be initialized\n");
     }
-    std.debug.print("libsodium initialized\n", .{});
     while (true) {
         var conn = try ss.accept();
-        var buff: [655360]u8 = undefined;
-        var read_size: usize = try conn.stream.reader().read(buff[0..]);
-        while (!utils.containsStr(buff[0..read_size], "\r\n\r\n") and read_size > 0) {
-            read_size += try conn.stream.reader().read(buff[read_size..]);
-        }
-        if (read_size > 0) {
-            var msg = buff[0..read_size];
+        var headers_buffer: [65536]u8 = undefined;
+        var headers_read_size: usize = try utils.read_header(&headers_buffer, conn.stream);
+        if (headers_read_size > 0) {
             var map = std.StringHashMap([]u8).init(alloc);
             defer map.deinit();
-            var msg_size = parse_http_message(msg, &map);
+            var msg = headers_buffer[0..headers_read_size];
+            var msg_size = utils.parse_http_message(msg, &map);
             if (msg_size) |parsed_msg_size| {
+                var body_buffer = try alloc.alloc(u8, utils.parseInt(map.get("content-type").?));
+                defer alloc.free(body_buffer);
+                // adding 2 because of the CRLF empty line
+                var body_initial = msg[parsed_msg_size + 2 .. headers_read_size];
+                std.mem.copy(u8, body_buffer, body_initial);
                 var content_length = map.get("content-length");
                 if (content_length) |cl| {
                     var content_length_number: usize = utils.parseInt(cl);
-                    if (read_size - (parsed_msg_size + 2) < content_length_number) {
-                        var read_body = try conn.stream.reader().read(buff[read_size..]);
+                    var body_buffer_len = headers_read_size - (parsed_msg_size + 2);
+                    if (headers_read_size - (parsed_msg_size + 2) < content_length_number) {
+                        var read_body = try conn.stream.reader().read(body_buffer[body_buffer_len..]);
                         while (read_body < content_length_number) {
-                            read_body += try conn.stream.reader().read(buff[read_size + read_body ..]);
+                            read_body += try conn.stream.reader().read(body_buffer[body_buffer_len + read_body ..]);
                         }
-                        read_size += read_body;
+                        body_buffer_len += read_body;
                     }
                 }
-                // adding 2 because of the CRLF empty line
-                var body = msg[parsed_msg_size + 2 .. read_size];
                 if (map.get("method")) |method| {
                     if (std.mem.eql(u8, method, "GET")) {
                         try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 40\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
@@ -146,8 +70,8 @@ pub fn main() !void {
                         if (std.mem.eql(u8, map.get("content-type").?, "application/json")) {
                             var parser = std.json.Parser.init(alloc, false);
                             defer parser.deinit();
-                            if (std.json.validate(body)) {
-                                var response_obj = try parser.parse(body);
+                            if (std.json.validate(body_buffer)) {
+                                var response_obj = try parser.parse(body_buffer);
                                 var response_type = response_obj.root.Object.get("type").?.Integer;
                                 switch (response_type) {
                                     1 => {
@@ -159,7 +83,7 @@ pub fn main() !void {
                                             var timestamp_body = try std.mem.concat(
                                                 alloc,
                                                 u8,
-                                                &[_][]u8{ timestamp.?, body },
+                                                &[_][]u8{ timestamp.?, body_buffer },
                                             );
                                             defer alloc.free(timestamp_body);
 
@@ -195,6 +119,39 @@ pub fn main() !void {
                                             try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 37\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello\"}}");
                                         } else if (std.mem.eql(u8, command_name, "greet")) {
                                             try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
+                                        } else if (std.mem.eql(u8, command_name, "stats")) {
+                                            var ssl: *openssl.SSL = undefined;
+                                            var ctx: *openssl.SSL_CTX = openssl.SSL_CTX_new(openssl.TLS_client_method()).?;
+                                            var sbio = openssl.BIO_new_ssl_connect(ctx);
+                                            _ = openssl.BIO_get_ssl(sbio, &ssl);
+                                            _ = openssl.BIO_set_conn_hostname(sbio, "discord.com:443");
+                                            var res = openssl.BIO_do_connect(sbio);
+                                            if (res == 1) {
+                                                var buff_format: [200]u8 = undefined;
+                                                var formatted = try std.fmt.bufPrintZ(
+                                                    &buff_format,
+                                                    "GET /api/v10/guilds/{s}/members?limit=1000 HTTP/1.1\r\nUser-Agent: curl/7.85.0\r\nHost: discord.com\r\nAccept: */*\r\nAuthorization: Bot {s}\r\n\r\n",
+                                                    .{ std.os.getenv("server_id").?, std.os.getenv("access_token").? },
+                                                );
+                                                var sent_puts = openssl.BIO_puts(sbio, @ptrCast([*c]const u8, formatted));
+                                                if (sent_puts > 0) {
+                                                    var header_map = std.StringHashMap([]u8).init(alloc);
+                                                    defer header_map.deinit();
+                                                    headers_read_size = try utils.read_header(&headers_buffer, conn.stream);
+                                                    var header_msg_size = utils.parse_http_message(headers_buffer[0..headers_read_size], &header_map);
+                                                    if (header_msg_size) |parsed_header_msg_size| {
+                                                        if (header_map.get("transfer-encoding")) |_| {
+                                                            // TAKE CARE OF CHUNKED ENCODED BODY
+                                                            var response_body_initial = headers_buffer[parsed_header_msg_size + 2 .. headers_read_size];
+                                                            if (response_body_initial.len > 0) {
+                                                                var chunk_body = try utils.handle_chunks(alloc, conn.stream, response_body_initial);
+                                                                defer alloc.free(chunk_body);
+                                                            }
+                                                        }
+                                                    } else |_| {}
+                                                }
+                                            }
+                                            openssl.BIO_free_all(sbio);
                                         }
                                     },
                                     3 => {},
@@ -212,25 +169,6 @@ pub fn main() !void {
         }
         conn.stream.close();
     }
-}
-
-test "parse http message" {
-    var msg: []const u8 = "POST / HTTP/1.1\r\nContent-Type: application/json\r\n";
-    var msg_copy = try std.testing.allocator.alloc(u8, msg.len);
-    defer std.testing.allocator.free(msg_copy);
-    std.mem.copy(u8, msg_copy, msg);
-    var map = std.StringHashMap([]u8).init(std.testing.allocator);
-    defer map.deinit();
-    var msg_size = try parse_http_message(msg_copy, &map);
-    try std.testing.expect(msg_size == msg.len);
-    var content_type = map.get("content-type").?;
-    try std.testing.expect(std.mem.eql(u8, content_type, "application/json"));
-    var start_line = map.get("start_line").?;
-    try std.testing.expect(std.mem.eql(u8, start_line, "POST / HTTP/1.1\r\n"));
-}
-
-test "env public key" {
-    try std.testing.expect(std.os.getenv("andrew_bot_public_key").?.len > 0);
 }
 
 test "utils" {
