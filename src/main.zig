@@ -2,7 +2,7 @@ const std = @import("std");
 const libsodium = @cImport({
     @cInclude("sodium.h");
 });
-const openssl = @cImport({
+pub const openssl = @cImport({
     @cInclude("openssl/ssl.h");
     @cInclude("openssl/bio.h");
 });
@@ -144,7 +144,7 @@ pub fn main() !void {
                                                             // TAKE CARE OF CHUNKED ENCODED BODY
                                                             var response_body_initial = headers_buffer[parsed_header_msg_size + 2 .. headers_read_size];
                                                             if (response_body_initial.len > 0) {
-                                                                var chunk_body = try utils.handle_chunks(alloc, conn.stream, response_body_initial);
+                                                                var chunk_body = try utils.handle_chunks(alloc, sbio, response_body_initial);
                                                                 defer alloc.free(chunk_body);
                                                             }
                                                         }
@@ -173,4 +173,40 @@ pub fn main() !void {
 
 test "utils" {
     _ = utils;
+}
+
+test "handle chunks" {
+    var ssl: *openssl.SSL = undefined;
+    var ctx: *openssl.SSL_CTX = openssl.SSL_CTX_new(openssl.TLS_client_method()).?;
+    var sbio = openssl.BIO_new_ssl_connect(ctx);
+    _ = openssl.BIO_get_ssl(sbio, &ssl);
+    _ = openssl.BIO_set_conn_hostname(sbio, "discord.com:443");
+    var res = openssl.BIO_do_connect(sbio);
+    try std.testing.expect(res == 1);
+    var buff_format: [200]u8 = undefined;
+    var formatted = try std.fmt.bufPrintZ(
+        &buff_format,
+        "GET /api/v10/guilds/{s}/members?limit=1000 HTTP/1.1\r\nUser-Agent: curl/7.85.0\r\nHost: discord.com\r\nAccept: */*\r\nAuthorization: Bot {s}\r\n\r\n",
+        .{ std.os.getenv("server_id").?, std.os.getenv("access_token").? },
+    );
+    var sent_size = openssl.BIO_puts(sbio, @ptrCast([*c]const u8, formatted));
+    if (sent_size > 0) {
+        var headers_buffer: [20000]u8 = undefined;
+        var header_map = std.StringHashMap([]u8).init(alloc);
+        defer header_map.deinit();
+        var headers_read_size = try utils.read_header_openssl(&headers_buffer, sbio);
+        var header_msg_size = utils.parse_http_message(headers_buffer[0..headers_read_size], &header_map);
+        if (header_msg_size) |parsed_header_msg_size| {
+            if (header_map.get("transfer-encoding")) |_| {
+                // TAKE CARE OF CHUNKED ENCODED BODY
+                var response_body_initial = headers_buffer[parsed_header_msg_size + 2 .. headers_read_size];
+                if (response_body_initial.len > 0) {
+                    var chunk_body = try utils.handle_chunks(alloc, sbio, response_body_initial);
+                    defer alloc.free(chunk_body);
+                    try std.testing.expect(chunk_body.len > 0);
+                }
+            }
+        } else |_| {}
+    }
+    openssl.BIO_free_all(sbio);
 }

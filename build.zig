@@ -31,9 +31,9 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe_tests = b.addTest("src/main.zig");
     exe_tests.linkLibC();
-    exe.linkSystemLibrary("ssl");
+    exe_tests.linkSystemLibrary("ssl");
     exe_tests.linkSystemLibrary("sodium");
-    exe.linkSystemLibrary("crypto");
+    exe_tests.linkSystemLibrary("crypto");
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
 

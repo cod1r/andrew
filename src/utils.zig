@@ -1,8 +1,16 @@
 const std = @import("std");
+const main = @import("main.zig");
 const HTTP_Parse_Err = error{
     InvalidHttpMessage,
     ChunkLengthTooBig,
 };
+pub fn read_header_openssl(buff: []u8, sbio: ?*main.openssl.BIO) !usize {
+    var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, buff), @intCast(c_int, buff.len));
+    while (!containsStr(buff[0..@intCast(usize, bytes_read)], "\r\n\r\n") and bytes_read > 0) {
+        bytes_read += main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, buff), @intCast(c_int, buff.len));
+    }
+    return @intCast(usize, bytes_read);
+}
 pub fn get_chunk_size(buff: []u8) !usize {
     if (buff.len == 0) return 0;
     var size: usize = 0;
@@ -26,75 +34,47 @@ pub fn get_chunk_size(buff: []u8) !usize {
     }
     return size;
 }
-
-pub fn handle_chunks(alloc: std.mem.Allocator, stream: std.net.Stream, initial_buff: []u8) ![]u8 {
+pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial_buff: []u8) ![]u8 {
     var chunked_bodies = std.ArrayList(u8).init(alloc);
     var read_buffer: [10000]u8 = undefined;
     if (initial_buff.len > 0) {
         try chunked_bodies.appendSlice(initial_buff[0..]);
     }
-    const chunk_part = enum { chunk_size, chunk_data, chunk_last_chunk, chunk_trailer };
-    var state: chunk_part = .chunk_size;
     var chunked_idx: usize = 0;
     while (true) {
-        switch (state) {
-            .chunk_size => {
-                while (std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n") == null) {
-                    var bytes_read = try stream.read(read_buffer[0..]);
-                    if (bytes_read > 0) {
-                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
-                    }
+        // get the first crlf which has the chunk size
+        // this could also be the last-chunk
+        while (std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n") == null) {
+            var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, &read_buffer), read_buffer.len);
+            if (bytes_read > 0) {
+                try chunked_bodies.appendSlice(read_buffer[0..@intCast(usize, bytes_read)]);
+            }
+        }
+        // parse the chunk size
+        // if 0, then we break out of the while loop
+        var chunk_data_size: usize = 0;
+        if (std.mem.indexOf(u8, chunked_bodies.items[0..], "\r\n")) |end_index| {
+            var parsed_size = try get_chunk_size(chunked_bodies.items[0..end_index]);
+            if (parsed_size > 0) {
+                chunked_idx = end_index + 1;
+                if (chunked_bodies.items.len - end_index > 1) {
+                    parsed_size -= chunked_bodies.items.len - (end_index + 1);
                 }
-                if (std.mem.indexOf(u8, chunked_bodies.items[0..], "\r\n")) |end_index| {
-                    var parsed_size = try get_chunk_size(chunked_bodies.items[0..end_index]);
-                    if (parsed_size > 0) {
-                        state = .chunk_data;
-                        chunked_idx = end_index + 1;
-                    } else {
-                        break;
-                    }
-                }
-            },
-            .chunk_data => {
-                while (!std.mem.containsAtLeast(u8, chunked_bodies.items[chunked_idx .. ], 1, "\r\n")) {
-                    var bytes_read = try stream.read(read_buffer[0..]);
-                    if (bytes_read > 0) {
-                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
-                    }
-                }
-                var second_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
-                if (second_crlf) |crlf| {
-                    state = .chunk_last_chunk;
-                    chunked_idx = crlf + 1;
-                }
-            },
-            .chunk_last_chunk => {
-                while (!std.mem.containsAtLeast(u8, chunked_bodies.items[chunked_idx ..], 1, "\r\n")) {
-                    var bytes_read = try stream.read(read_buffer[0..]);
-                    if (bytes_read > 0) {
-                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
-                    }
-                }
-                var third_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
-                if (third_crlf) |crlf| {
-                    state = .chunk_trailer;
-                    chunked_idx = crlf + 1;
-                }
-            },
-            .chunk_trailer => {
-                // we are going to ignore trailer fields
-                while (!std.mem.containsAtLeast(u8, chunked_bodies.items[chunked_idx ..], 1, "\r\n")) {
-                    var bytes_read = try stream.read(read_buffer[0..]);
-                    if (bytes_read > 0) {
-                        try chunked_bodies.appendSlice(read_buffer[0..bytes_read]);
-                    }
-                }
-                var final_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
-                if (final_crlf) |crlf| {
-                    chunked_idx = crlf + 3;
-                    break;
-                }
-            },
+                chunk_data_size = parsed_size;
+            } else {
+                break;
+            }
+        }
+        var prev_chunk_idx: usize = chunked_idx;
+        // loop until chunk data size is 0 and we get another crlf indicating the end of the chunk data
+        while (chunk_data_size > 0 and !std.mem.containsAtLeast(u8, chunked_bodies.items[prev_chunk_idx..], 1, "\r\n")) {
+            var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, &read_buffer), read_buffer.len);
+            if (bytes_read > 0) {
+                try chunked_bodies.appendSlice(read_buffer[0..@intCast(usize, bytes_read)]);
+                prev_chunk_idx = chunked_idx;
+                chunked_idx += @intCast(usize, bytes_read);
+                chunk_data_size -= @intCast(usize, bytes_read);
+            }
         }
     }
     // TODO: process chunked bytes and get the actual chunk data and parse into JSON
