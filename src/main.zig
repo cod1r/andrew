@@ -142,7 +142,12 @@ pub fn main() !void {
                                                             if (header_map.get("transfer-encoding")) |_| {
                                                                 // TAKE CARE OF CHUNKED ENCODED BODY
                                                                 var response_body_initial = headers_buffer[parsed_header_msg_size..headers_read_size];
-                                                                var chunk_body = try utils.handle_chunks(alloc, sbio, response_body_initial);
+                                                                var chunk_data_str = try utils.handle_chunks(alloc, sbio, response_body_initial);
+                                                                if (std.json.validate(chunk_data_str)) {
+                                                                    var member_list_json = try parser.parse(chunk_data_str);
+                                                                } else {
+                                                                    std.debug.print("chunk parsing failed and json validating returned false\n", .{});
+                                                                }
                                                                 try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
                                                             }
                                                         } else |err| std.debug.print("{s}\n", .{@errorName(err)});
@@ -201,9 +206,10 @@ test "handle chunks" {
                 // TAKE CARE OF CHUNKED ENCODED BODY
                 var response_body_initial = headers_buffer[parsed_header_msg_size..headers_read_size];
                 if (response_body_initial.len > 0) {
-                    var chunk_body = try utils.handle_chunks(testing_alloc, sbio, response_body_initial);
-                    try std.testing.expect(chunk_body.len > 0);
-                    try std.testing.expect(std.json.validate(chunk_body) == false);
+                    var chunk_data_str = try utils.handle_chunks(testing_alloc, sbio, response_body_initial);
+                    defer testing_alloc.free(chunk_data_str);
+                    try std.testing.expect(chunk_data_str.len > 0);
+                    try std.testing.expect(std.json.validate(chunk_data_str) == true);
                 }
             }
         } else |err| std.debug.print("{s}\n", .{@errorName(err)});

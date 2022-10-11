@@ -79,6 +79,8 @@ pub fn get_chunk_size(buff: []const u8) !usize {
 }
 pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial_buff: []u8) ![]u8 {
     var chunked_bodies = std.ArrayList(u8).init(alloc);
+    defer chunked_bodies.deinit();
+    var chunk_data = std.ArrayList(u8).init(alloc);
     var read_buffer: [10000]u8 = undefined;
     if (initial_buff.len > 0) {
         try chunked_bodies.appendSlice(initial_buff[0..]);
@@ -93,9 +95,10 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
                 try chunked_bodies.appendSlice(read_buffer[0..@intCast(usize, bytes_read)]);
             }
         }
-        // getting the index of the crlf
+        // getting the index of the crlf of the line that has the chunk_size
         var current_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
         if (current_crlf) |crlf| {
+            // adding two because we want to include the crlf for the get_chunk_size (kind of scuffed tbh)
             var actual_crlf = chunked_idx + crlf + 2;
             // checking the parsed_size to see if it is 0 or not
             var parsed_size = try get_chunk_size(chunked_bodies.items[chunked_idx..actual_crlf]);
@@ -111,8 +114,15 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
                 }
                 // we move the idx "pointer" to the end of the crlf
                 // and continue the outer loop
+                //
+                // we also take everything between the first crlf and the end of the data crlf and
+                // append it to chunk_data
                 if (next_crlf_res) |next_crlf| {
-                    chunked_idx = next_crlf + 2;
+                    // we have to offsest the next_crlf index because we used a subset of the slice to find the next_crlf
+                    // and the offset started with actual_crlf
+                    var actual_next_crlf = next_crlf + actual_crlf;
+                    try chunk_data.appendSlice(chunked_bodies.items[actual_crlf .. actual_next_crlf]);
+                    chunked_idx = actual_next_crlf + 2;
                 }
             } else {
                 // if parsed_size is 0, then we break because there will not be anymore chunks
@@ -121,7 +131,7 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
         }
     }
     // TODO: process chunked bytes and get the actual chunk data and parse into JSON
-    return chunked_bodies.items;
+    return chunk_data.items;
 }
 
 pub fn read_header(buff: []u8, stream: std.net.Stream) !usize {
@@ -141,6 +151,7 @@ pub fn parse_http_message(buff: []u8, map: *std.StringHashMap([]const u8)) !usiz
             try map.put("method", buff[0..fs]);
             if (newline_start_line) |ns| {
                 try map.put("request-target", buff[fs + 1 .. ns]);
+                // adding 2 because of the crlf and bc we want to move past it
                 var index: usize = ns + 2;
                 while (index < end_of_http_msg) {
                     var key_end = std.mem.indexOf(u8, buff[index .. end_of_http_msg + 4], ":");
