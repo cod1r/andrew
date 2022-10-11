@@ -174,7 +174,7 @@ pub fn main() !void {
                                                                                         const s_per_month: usize = std.time.s_per_day * 30;
                                                                                         const yrs_since_epoch_for_input_yr = yr_num - 1970;
                                                                                         var s_since_epoch_input_yr =
-                                                                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + mnth_num * s_per_month + day_num * std.time.s_per_day);
+                                                                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + (mnth_num - 1) * s_per_month + day_num * std.time.s_per_day);
 
                                                                                         if (timestamp - s_per_yr <= s_since_epoch_input_yr) {
                                                                                             joins_last_year += 1;
@@ -299,11 +299,13 @@ test "handle chunks" {
                                         var yr_num = utils.parseInt(yr);
                                         var mnth_num = utils.parseInt(mnth);
                                         var day_num = utils.parseInt(day);
+                                        std.debug.print("\nyr {} mnth {} day {}\n", .{ yr_num, mnth_num, day_num });
                                         const s_per_yr: usize = std.time.s_per_day * 365;
                                         const s_per_month: usize = std.time.s_per_day * 30;
                                         var yrs_since_epoch_for_input_yr = yr_num - 1970;
                                         var s_since_epoch_input_yr =
-                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + mnth_num * s_per_month + day_num * std.time.s_per_day);
+                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + (mnth_num - 1) * s_per_month + day_num * std.time.s_per_day);
+
                                         if (timestamp - s_per_yr <= s_since_epoch_input_yr) {
                                             joins_last_year += 1;
                                         }
@@ -320,7 +322,7 @@ test "handle chunks" {
                             }
                         }
                     }
-                    std.log.err("\n{} {} {}\n", .{ joins_last_year, joins_last_30_days, joins_last_1_day });
+                    std.debug.print("\nyr: {} mnth: {} day: {}\n", .{ joins_last_year, joins_last_30_days, joins_last_1_day });
                 }
             }
         } else |err| std.debug.print("{s}\n", .{@errorName(err)});
