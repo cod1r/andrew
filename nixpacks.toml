@@ -1,5 +1,5 @@
 [phases.setup]
 nixPkgs = ['zig', 'gcc', 'libsodium', 'openssl']
-aptPkgs = ['libsodium-dev', 'crypto', 'openssl']
+aptPkgs = ['libsodium-dev', 'openssl']
 [start]
 cmd = './zig-out/bin/andrew'
