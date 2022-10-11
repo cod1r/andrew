@@ -198,10 +198,6 @@ test "handle chunks" {
         defer header_map.deinit();
         var headers_read_size = try utils.read_header_openssl(&headers_buffer, sbio);
         var header_msg_size = utils.parse_http_message(headers_buffer[0..headers_read_size], &header_map);
-        //var keyIter = header_map.keyIterator();
-        //while (keyIter.next()) |key| {
-        //    std.debug.print("{s}\n", .{key.*});
-        //}
         if (header_msg_size) |parsed_header_msg_size| {
             try std.testing.expect(header_map.get("transfer-encoding") != null);
             if (header_map.get("transfer-encoding")) |_| {
@@ -209,7 +205,6 @@ test "handle chunks" {
                 var response_body_initial = headers_buffer[parsed_header_msg_size..headers_read_size];
                 if (response_body_initial.len > 0) {
                     var chunk_body = try utils.handle_chunks(testing_alloc, sbio, response_body_initial);
-                    defer testing_alloc.free(chunk_body);
                     try std.testing.expect(chunk_body.len > 0);
                     try std.testing.expect(std.json.validate(chunk_body) == false);
                 }

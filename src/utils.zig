@@ -15,20 +15,62 @@ pub fn get_chunk_size(buff: []const u8) !usize {
     if (buff.len == 0) return 0;
     var size: usize = 0;
     for (buff) |_, index| {
-        if (buff[index] == ';' or (index + 1 < buff.len and buff[index] == '\r' and buff[index + 1] == '\n')) {
+        if (buff[index] == ';' or buff[index] == '\r') {
             var idx: usize = 0;
-            while (idx + 1 < index) {
-                switch (buff[idx]) {
-                    '0'...'9' => size += @shlExact(@as(usize, buff[idx] - '0'), @truncate(u6, 8 * ((index - 1 - idx) / 2) + 4)),
-                    'a'...'f' => size += @shlExact(@as(usize, 10 + (buff[idx] - 'a')), @truncate(u6, 8 * ((index - 1 - idx) / 2) + 4)),
-                    else => {},
+            while (idx < index) {
+                if (idx % 2 != 0 and idx + 1 < index) {
+                    switch (buff[idx]) {
+                        '0'...'9' => size += @shlExact(
+                            @as(usize, buff[idx] - '0'),
+                            @truncate(u6, 8 * ((index - 1 - idx) / 2) + 4),
+                        ),
+                        'a'...'f' => size += @shlExact(
+                            @as(usize, 10 + (buff[idx] - 'a')),
+                            @truncate(
+                                u6,
+                                8 * ((index - 1 - idx) / 2) + 4,
+                            ),
+                        ),
+                        else => {},
+                    }
+                    switch (buff[idx + 1]) {
+                        '0'...'9' => size += @shlExact(
+                            @as(usize, buff[idx + 1] - '0'),
+                            @truncate(
+                                u6,
+                                8 * ((index - 1 - (idx + 1)) / 2),
+                            ),
+                        ),
+                        'a'...'f' => size += @shlExact(
+                            @as(usize, 10 + (buff[idx + 1] - 'a')),
+                            @truncate(
+                                u6,
+                                8 * ((index - 1 - (idx + 1)) / 2),
+                            ),
+                        ),
+                        else => {},
+                    }
+                    idx += 2;
+                } else {
+                    switch (buff[idx]) {
+                        '0'...'9' => size += @shlExact(
+                            @as(usize, buff[idx] - '0'),
+                            @truncate(
+                                u6,
+                                8 * ((index - 1 - idx) / 2),
+                            ),
+                        ),
+                        'a'...'f' => size += @shlExact(
+                            @as(usize, 10 + (buff[idx] - 'a')),
+                            @truncate(
+                                u6,
+                                8 * ((index - 1 - idx) / 2),
+                            ),
+                        ),
+                        else => {},
+                    }
+                    idx += 1;
                 }
-                switch (buff[idx + 1]) {
-                    '0'...'9' => size += @shlExact(@as(usize, buff[idx + 1] - '0'), @truncate(u6, 8 * ((index - 1 - (idx + 1)) / 2))),
-                    'a'...'f' => size += @shlExact(@as(usize, 10 + (buff[idx + 1] - 'a')), @truncate(u6, 8 * ((index - 1 - (idx + 1)) / 2))),
-                    else => {},
-                }
-                idx += 2;
             }
             break;
         }
@@ -55,17 +97,18 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
         // getting the index of the crlf
         var current_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
         if (current_crlf) |crlf| {
+            var actual_crlf = chunked_idx + crlf + 2;
             // checking the parsed_size to see if it is 0 or not
-            var parsed_size = try get_chunk_size(chunked_bodies.items[chunked_idx..crlf + 2]);
+            var parsed_size = try get_chunk_size(chunked_bodies.items[chunked_idx..actual_crlf]);
             if (parsed_size > 0) {
                 // getting the next crlf which means the end of the chunk_data part
-                var next_crlf_res = std.mem.indexOf(u8, chunked_bodies.items[crlf + 2 ..], "\r\n");
+                var next_crlf_res = std.mem.indexOf(u8, chunked_bodies.items[actual_crlf..], "\r\n");
                 while (next_crlf_res == null) {
                     var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, &read_buffer), read_buffer.len);
                     if (bytes_read > 0) {
                         try chunked_bodies.appendSlice(read_buffer[0..@intCast(usize, bytes_read)]);
                     }
-                    next_crlf_res = std.mem.indexOf(u8, chunked_bodies.items[crlf + 2 ..], "\r\n");
+                    next_crlf_res = std.mem.indexOf(u8, chunked_bodies.items[actual_crlf..], "\r\n");
                 }
                 // we move the idx "pointer" to the end of the crlf
                 // and continue the outer loop
@@ -360,5 +403,7 @@ test "parse http message" {
 
 test "parse chunk size" {
     var parsed_size = try get_chunk_size("36f4\r\n");
-    try std.testing.expect(parsed_size == 14068);
+    var parsed_size2 = try get_chunk_size("363\r\n");
+    try std.testing.expect(parsed_size == 0x36f4);
+    try std.testing.expect(parsed_size2 == 0x363);
 }
