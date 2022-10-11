@@ -172,19 +172,19 @@ pub fn main() !void {
                                                                                         var day_num = utils.parseInt(day);
                                                                                         const s_per_yr: usize = std.time.s_per_day * 365;
                                                                                         const s_per_month: usize = std.time.s_per_day * 30;
-                                                                                        const yrs_since_epoch_for_input_yr = yr_num - 1970;
+                                                                                        var yrs_since_epoch_for_input_yr = yr_num - 1970;
                                                                                         var s_since_epoch_input_yr =
-                                                                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + (mnth_num - 1) * s_per_month + day_num * std.time.s_per_day);
+                                                                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + mnth_num * s_per_month + day_num * std.time.s_per_day);
 
-                                                                                        if (timestamp - s_per_yr <= s_since_epoch_input_yr) {
+                                                                                        if (std.math.absInt(timestamp - s_since_epoch_input_yr) <= s_per_yr) {
                                                                                             joins_last_year += 1;
                                                                                         }
 
-                                                                                        if (timestamp - s_per_month <= s_since_epoch_input_yr) {
+                                                                                        if (std.math.absInt(timestamp - s_since_epoch_input_yrnth) <= s_per_month) {
                                                                                             joins_last_30_days += 1;
                                                                                         }
 
-                                                                                        if (timestamp - std.time.s_per_day <= s_since_epoch_input_yr) {
+                                                                                        if (std.math.absInt(timestamp - s_since_epoch_input_yr.s_per_day) <= std.time.s_per_day) {
                                                                                             joins_last_1_day += 1;
                                                                                         }
                                                                                     }
@@ -304,17 +304,17 @@ test "handle chunks" {
                                         const s_per_month: usize = std.time.s_per_day * 30;
                                         var yrs_since_epoch_for_input_yr = yr_num - 1970;
                                         var s_since_epoch_input_yr =
-                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + (mnth_num - 1) * s_per_month + day_num * std.time.s_per_day);
+                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + mnth_num * s_per_month + day_num * std.time.s_per_day);
 
-                                        if (timestamp - s_per_yr <= s_since_epoch_input_yr) {
+                                        if (std.math.absInt(timestamp - s_since_epoch_input_yr) <= s_per_yr) {
                                             joins_last_year += 1;
                                         }
 
-                                        if (timestamp - s_per_month <= s_since_epoch_input_yr) {
+                                        if (std.math.absInt(timestamp - s_since_epoch_input_yrnth) <= s_per_month) {
                                             joins_last_30_days += 1;
                                         }
 
-                                        if (timestamp - std.time.s_per_day <= s_since_epoch_input_yr) {
+                                        if (std.math.absInt(timestamp - s_since_epoch_input_yr.s_per_day) <= std.time.s_per_day) {
                                             joins_last_1_day += 1;
                                         }
                                     }
