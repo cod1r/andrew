@@ -18,7 +18,7 @@ pub fn get_chunk_size(buff: []const u8) !usize {
         if (buff[index] == ';' or buff[index] == '\r') {
             var idx: usize = 0;
             while (idx < index) {
-                if (idx % 2 != 0 and idx + 1 < index) {
+                if ((index - idx) % 2 == 0 and idx + 1 < index) {
                     switch (buff[idx]) {
                         '0'...'9' => size += @shlExact(
                             @as(usize, buff[idx] - '0'),
@@ -79,7 +79,6 @@ pub fn get_chunk_size(buff: []const u8) !usize {
 }
 pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial_buff: []u8) ![]u8 {
     var chunked_bodies = std.ArrayList(u8).init(alloc);
-    defer chunked_bodies.deinit();
     var read_buffer: [10000]u8 = undefined;
     if (initial_buff.len > 0) {
         try chunked_bodies.appendSlice(initial_buff[0..]);

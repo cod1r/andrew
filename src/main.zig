@@ -134,7 +134,6 @@ pub fn main() !void {
                                                     );
                                                     var sent_puts = openssl.BIO_puts(sbio, @ptrCast([*c]const u8, formatted));
                                                     if (sent_puts > 0) {
-                                                        std.debug.print("IN\n", .{});
                                                         var header_map = std.StringHashMap([]const u8).init(alloc);
                                                         defer header_map.deinit();
                                                         headers_read_size = try utils.read_header_openssl(&headers_buffer, sbio);
@@ -144,8 +143,6 @@ pub fn main() !void {
                                                                 // TAKE CARE OF CHUNKED ENCODED BODY
                                                                 var response_body_initial = headers_buffer[parsed_header_msg_size..headers_read_size];
                                                                 var chunk_body = try utils.handle_chunks(alloc, sbio, response_body_initial);
-                                                                defer alloc.free(chunk_body);
-                                                                std.debug.print("chunk body: {s}\n", .{chunk_body});
                                                                 try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
                                                             }
                                                         } else |err| std.debug.print("{s}\n", .{@errorName(err)});
