@@ -6,28 +6,29 @@ const HTTP_Parse_Err = error{
 };
 pub fn read_header_openssl(buff: []u8, sbio: ?*main.openssl.BIO) !usize {
     var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, buff), @intCast(c_int, buff.len));
-    while (!containsStr(buff[0..@intCast(usize, bytes_read)], "\r\n\r\n") and bytes_read > 0) {
-        bytes_read += main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, buff), @intCast(c_int, buff.len));
+    while (!std.mem.containsAtLeast(u8, buff[0..@intCast(usize, bytes_read)], 1, "\r\n\r\n") and bytes_read > 0) {
+        bytes_read += main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, buff[@intCast(usize, bytes_read)..]), @intCast(c_int, buff.len));
     }
     return @intCast(usize, bytes_read);
 }
-pub fn get_chunk_size(buff: []u8) !usize {
+pub fn get_chunk_size(buff: []const u8) !usize {
     if (buff.len == 0) return 0;
     var size: usize = 0;
     for (buff) |_, index| {
         if (buff[index] == ';' or (index + 1 < buff.len and buff[index] == '\r' and buff[index + 1] == '\n')) {
             var idx: usize = 0;
-            while (idx < index) {
+            while (idx + 1 < index) {
                 switch (buff[idx]) {
-                    '0'...'9' => size += (buff[idx] - '0') * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
-                    'a'...'f' => size += (10 + (buff[idx] - 'a')) * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
+                    '0'...'9' => size += @shlExact(@as(usize, buff[idx] - '0'), @truncate(u6, 8 * ((index - 1 - idx) / 2) + 4)),
+                    'a'...'f' => size += @shlExact(@as(usize, 10 + (buff[idx] - 'a')), @truncate(u6, 8 * ((index - 1 - idx) / 2) + 4)),
                     else => {},
                 }
                 switch (buff[idx + 1]) {
-                    '0'...'9' => size += (buff[idx + 1] - '0') * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
-                    'a'...'f' => size += (10 + (buff[idx + 1] - 'a')) * std.math.pow(usize, 10, (buff.len - 1 - idx) / 2),
+                    '0'...'9' => size += @shlExact(@as(usize, buff[idx + 1] - '0'), @truncate(u6, 8 * ((index - 1 - (idx + 1)) / 2))),
+                    'a'...'f' => size += @shlExact(@as(usize, 10 + (buff[idx + 1] - 'a')), @truncate(u6, 8 * ((index - 1 - (idx + 1)) / 2))),
                     else => {},
                 }
+                idx += 2;
             }
             break;
         }
@@ -36,13 +37,14 @@ pub fn get_chunk_size(buff: []u8) !usize {
 }
 pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial_buff: []u8) ![]u8 {
     var chunked_bodies = std.ArrayList(u8).init(alloc);
+    defer chunked_bodies.deinit();
     var read_buffer: [10000]u8 = undefined;
     if (initial_buff.len > 0) {
         try chunked_bodies.appendSlice(initial_buff[0..]);
     }
     var chunked_idx: usize = 0;
     while (true) {
-        // get the first crlf which has the chunk size
+        // get the first crlf (after 0 or more chunks) which has the chunk size
         // this could also be the last-chunk
         while (std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n") == null) {
             var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, &read_buffer), read_buffer.len);
@@ -50,30 +52,29 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
                 try chunked_bodies.appendSlice(read_buffer[0..@intCast(usize, bytes_read)]);
             }
         }
-        // parse the chunk size
-        // if 0, then we break out of the while loop
-        var chunk_data_size: usize = 0;
-        if (std.mem.indexOf(u8, chunked_bodies.items[0..], "\r\n")) |end_index| {
-            var parsed_size = try get_chunk_size(chunked_bodies.items[0..end_index]);
+        // getting the index of the crlf
+        var current_crlf = std.mem.indexOf(u8, chunked_bodies.items[chunked_idx..], "\r\n");
+        if (current_crlf) |crlf| {
+            // checking the parsed_size to see if it is 0 or not
+            var parsed_size = try get_chunk_size(chunked_bodies.items[chunked_idx..crlf + 2]);
             if (parsed_size > 0) {
-                chunked_idx = end_index + 1;
-                if (chunked_bodies.items.len - end_index > 1) {
-                    parsed_size -= chunked_bodies.items.len - (end_index + 1);
+                // getting the next crlf which means the end of the chunk_data part
+                var next_crlf_res = std.mem.indexOf(u8, chunked_bodies.items[crlf + 2 ..], "\r\n");
+                while (next_crlf_res == null) {
+                    var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, &read_buffer), read_buffer.len);
+                    if (bytes_read > 0) {
+                        try chunked_bodies.appendSlice(read_buffer[0..@intCast(usize, bytes_read)]);
+                    }
+                    next_crlf_res = std.mem.indexOf(u8, chunked_bodies.items[crlf + 2 ..], "\r\n");
                 }
-                chunk_data_size = parsed_size;
+                // we move the idx "pointer" to the end of the crlf
+                // and continue the outer loop
+                if (next_crlf_res) |next_crlf| {
+                    chunked_idx = next_crlf + 2;
+                }
             } else {
+                // if parsed_size is 0, then we break because there will not be anymore chunks
                 break;
-            }
-        }
-        var prev_chunk_idx: usize = chunked_idx;
-        // loop until chunk data size is 0 and we get another crlf indicating the end of the chunk data
-        while (chunk_data_size > 0 and !std.mem.containsAtLeast(u8, chunked_bodies.items[prev_chunk_idx..], 1, "\r\n")) {
-            var bytes_read = main.openssl.BIO_read(sbio, @ptrCast(?*anyopaque, &read_buffer), read_buffer.len);
-            if (bytes_read > 0) {
-                try chunked_bodies.appendSlice(read_buffer[0..@intCast(usize, bytes_read)]);
-                prev_chunk_idx = chunked_idx;
-                chunked_idx += @intCast(usize, bytes_read);
-                chunk_data_size -= @intCast(usize, bytes_read);
             }
         }
     }
@@ -83,83 +84,48 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
 
 pub fn read_header(buff: []u8, stream: std.net.Stream) !usize {
     var headers_read_size: usize = try stream.reader().read(buff[0..]);
-    while (!containsStr(buff[0..headers_read_size], "\r\n\r\n") and headers_read_size > 0) {
+    while (!std.mem.containsAtLeast(u8, buff[0..headers_read_size], 1, "\r\n\r\n") and headers_read_size > 0) {
         headers_read_size += try stream.reader().read(buff[headers_read_size..]);
     }
     return headers_read_size;
 }
 
-pub fn parse_http_message(buff: []u8, map: *std.StringHashMap([]u8)) !usize {
-    var newline_start_line: usize = 0;
-    for (buff) |chr, idx| {
-        if (chr == '\n') {
-            newline_start_line = idx;
-            break;
-        }
-    }
-    var first_space: usize = 0;
-    for (buff) |chr, idx| {
-        if (chr == ' ') {
-            first_space = idx;
-            break;
-        }
-    }
-    if (first_space > 0) {
-        try map.put("method", buff[0..first_space]);
-    } else {
-        return HTTP_Parse_Err.InvalidHttpMessage;
-    }
-    if (newline_start_line > 0) {
-        try map.put("start_line", buff[0..(newline_start_line + 1)]);
-    } else {
-        try map.put("start_line", buff[0..]);
-    }
-    var index: usize = newline_start_line + 1;
-    var read: usize = newline_start_line + 1;
-    while (index < buff.len) {
-        var key_end: usize = index;
-        var newline_value_end: usize = index;
-        var local_idx: usize = index;
-        while (local_idx < buff.len) : (local_idx += 1) {
-            if (buff[local_idx] == ':') {
-                key_end = local_idx;
-            } else if (buff[local_idx] == '\n') {
-                // msg could not have newline character
-                newline_value_end = local_idx;
-                break;
+pub fn parse_http_message(buff: []u8, map: *std.StringHashMap([]const u8)) !usize {
+    var end = std.mem.indexOf(u8, buff, "\r\n\r\n");
+    if (end) |end_of_http_msg| {
+        var newline_start_line = std.mem.indexOf(u8, buff[0..end_of_http_msg], "\r\n");
+        var first_space = std.mem.indexOf(u8, buff[0..end_of_http_msg], " ");
+        if (first_space) |fs| {
+            try map.put("method", buff[0..fs]);
+            if (newline_start_line) |ns| {
+                try map.put("request-target", buff[fs + 1 .. ns]);
+                var index: usize = ns + 2;
+                while (index < end_of_http_msg) {
+                    var key_end = std.mem.indexOf(u8, buff[index .. end_of_http_msg + 4], ":");
+                    var crlf = std.mem.indexOf(u8, buff[index .. end_of_http_msg + 4], "\r\n");
+                    if (key_end) |ke| {
+                        var temp_ke = ke + index;
+                        if (crlf) |ne| {
+                            var temp_ne = ne + index;
+                            var key = buff[index..temp_ke];
+                            toLower(key);
+                            var value = std.mem.trim(u8, buff[temp_ke + 1 .. temp_ne], " \r\n");
+                            try map.put(key, value);
+                            index = temp_ne + 2;
+                        } else {
+                            std.debug.print("no crlf: {s}\n", .{buff[index..end_of_http_msg]});
+                            break;
+                        }
+                    } else {
+                        std.debug.print("no key_end: {s}\n", .{buff[index..end_of_http_msg]});
+                        break;
+                    }
+                }
+                return end_of_http_msg + 4;
             }
         }
-        if (key_end > index and newline_value_end > key_end + 1) {
-            var key = buff[index..key_end];
-            toLower(key);
-
-            var value_beginning: usize = key_end + 1;
-            var value_end: usize = newline_value_end;
-            if (buff[value_beginning] == ' ') value_beginning += 1;
-            while (buff[value_end] == '\r' or buff[value_end] == ' ' or buff[value_end] == '\n') {
-                value_end -= 1;
-            }
-            var value = buff[value_beginning .. value_end + 1];
-
-            try map.put(key, value);
-            index = newline_value_end + 1;
-            read += (newline_value_end + 1 - read);
-        } else if (key_end > index and newline_value_end <= key_end + 1) {
-            var key = buff[index..key_end];
-            toLower(key);
-
-            var value_beginning: usize = key_end + 1;
-            if (buff[value_beginning] == ' ') value_beginning += 1;
-            var value = buff[value_beginning..buff.len];
-
-            try map.put(key, value);
-            index = buff.len;
-            read += (buff.len - read);
-        } else {
-            break;
-        }
     }
-    return read;
+    return HTTP_Parse_Err.InvalidHttpMessage;
 }
 
 pub fn check_newline_carriage_return(in: []u8) void {
@@ -182,16 +148,6 @@ pub fn parseInt(str: []const u8) usize {
         res += (chr - '0') * (std.math.pow(u16, 10, @intCast(u16, str.len - 1 - idx)));
     }
     return res;
-}
-pub fn containsStr(str: []const u8, target: []const u8) bool {
-    var idx: usize = 0;
-    while (idx + target.len <= str.len and str.len >= target.len) {
-        if (std.mem.eql(u8, str[idx .. idx + target.len], target)) {
-            return true;
-        }
-        idx += 1;
-    }
-    return false;
 }
 const HexConvertErr = error{InvalidHexString};
 pub fn fromHex(alloc: std.mem.Allocator, hexStr: []const u8) ![]u8 {
@@ -387,24 +343,22 @@ test "toLower" {
     try std.testing.expect(std.mem.eql(u8, str[0..], "jason"));
 }
 
-test "containsStr" {
-    try std.testing.expect(containsStr("\r\n\r\n", "\r\n\r\n"));
-    try std.testing.expect(containsStr("asdfasdfasdfasdfasdf\r\n\r\n", "\r\n\r\n"));
-    try std.testing.expect(containsStr("asdfasdfasdfasdfasdf\r\n\r\nsdfasdfasdfasdfsdf", "\r\n\r\n"));
-}
-
 test "parse http message" {
     var alloc = std.testing.allocator;
-    var msg: []const u8 = "POST / HTTP/1.1\r\nContent-Type: application/json\r\n";
+    var msg: []const u8 = "POST / HTTP/1.1\r\nContent-Type: application/json\r\n\r\n";
     var msg_copy = try alloc.alloc(u8, msg.len);
     defer alloc.free(msg_copy);
     std.mem.copy(u8, msg_copy, msg);
-    var map = std.StringHashMap([]u8).init(alloc);
+    var map = std.StringHashMap([]const u8).init(alloc);
     defer map.deinit();
     var msg_size = try parse_http_message(msg_copy, &map);
     try std.testing.expect(msg_size == msg.len);
+    try std.testing.expect(map.get("content-type") != null);
     var content_type = map.get("content-type").?;
     try std.testing.expect(std.mem.eql(u8, content_type, "application/json"));
-    var start_line = map.get("start_line").?;
-    try std.testing.expect(std.mem.eql(u8, start_line, "POST / HTTP/1.1\r\n"));
+}
+
+test "parse chunk size" {
+    var parsed_size = try get_chunk_size("36f4\r\n");
+    try std.testing.expect(parsed_size == 14068);
 }
