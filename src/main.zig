@@ -70,6 +70,7 @@ pub fn main() !void {
                                 defer parser.deinit();
                                 if (std.json.validate(body_buffer)) {
                                     var response_obj = try parser.parse(body_buffer);
+                                    defer response_obj.deinit();
                                     var response_type = response_obj.root.Object.get("type").?.Integer;
                                     switch (response_type) {
                                         1 => {
@@ -126,7 +127,7 @@ pub fn main() !void {
                                                 _ = openssl.BIO_set_conn_hostname(sbio, "discord.com:443");
                                                 var res = openssl.BIO_do_connect(sbio);
                                                 if (res == 1) {
-                                                    var buff_format: [1000]u8 = undefined;
+                                                    var buff_format: [2000]u8 = undefined;
                                                     var formatted = try std.fmt.bufPrintZ(
                                                         &buff_format,
                                                         "GET /api/v10/guilds/{s}/members?limit=1000 HTTP/1.1\r\nUser-Agent: curl/7.85.0\r\nHost: discord.com\r\nAccept: */*\r\nAuthorization: Bot {s}\r\n\r\n",
@@ -143,12 +144,73 @@ pub fn main() !void {
                                                                 // TAKE CARE OF CHUNKED ENCODED BODY
                                                                 var response_body_initial = headers_buffer[parsed_header_msg_size..headers_read_size];
                                                                 var chunk_data_str = try utils.handle_chunks(alloc, sbio, response_body_initial);
+                                                                defer alloc.free(chunk_data_str);
                                                                 if (std.json.validate(chunk_data_str)) {
-                                                                    var member_list_json = try parser.parse(chunk_data_str);
+                                                                    var parser2 = std.json.Parser.init(alloc, false);
+                                                                    defer parser2.deinit();
+                                                                    var member_list_json = try parser2.parse(chunk_data_str);
+                                                                    defer member_list_json.deinit();
+                                                                    var member_obj = member_list_json.root.Array.items;
+                                                                    var join_dates = std.ArrayList([]const u8).init(alloc);
+                                                                    defer join_dates.deinit();
+                                                                    for (member_obj) |mem_obj| {
+                                                                        try join_dates.append(mem_obj.Object.get("joined_at").?.String);
+                                                                    }
+                                                                    var timestamp = std.time.timestamp();
+                                                                    var joins_last_year: usize = 0;
+                                                                    var joins_last_30_days: usize = 0;
+                                                                    var joins_last_1_day: usize = 0;
+                                                                    for (join_dates.items) |join_date_str| {
+                                                                        var date_slice = std.mem.indexOf(u8, join_date_str, "T");
+                                                                        if (date_slice) |ds_last_idx| {
+                                                                            var splitIter = std.mem.split(u8, join_date_str[0..ds_last_idx], "-");
+                                                                            if (splitIter.next()) |yr| {
+                                                                                if (splitIter.next()) |mnth| {
+                                                                                    if (splitIter.next()) |day| {
+                                                                                        var yr_num = utils.parseInt(yr);
+                                                                                        var mnth_num = utils.parseInt(mnth);
+                                                                                        var day_num = utils.parseInt(day);
+                                                                                        const s_per_yr: usize = std.time.s_per_day * 365;
+                                                                                        const s_per_month: usize = std.time.s_per_day * 30;
+                                                                                        const yrs_since_epoch_for_input_yr = yr_num - 1970;
+                                                                                        var s_since_epoch_input_yr =
+                                                                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + mnth_num * s_per_month + day_num * std.time.s_per_day);
+
+                                                                                        if (timestamp - s_per_yr <= s_since_epoch_input_yr) {
+                                                                                            joins_last_year += 1;
+                                                                                        }
+
+                                                                                        if (timestamp - s_per_month <= s_since_epoch_input_yr) {
+                                                                                            joins_last_30_days += 1;
+                                                                                        }
+
+                                                                                        if (timestamp - std.time.s_per_day <= s_since_epoch_input_yr) {
+                                                                                            joins_last_1_day += 1;
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    var buff_format_data: [10000]u8 = undefined;
+                                                                    var formatted_data = try std.fmt.bufPrintZ(
+                                                                        &buff_format_data,
+                                                                        "{{\"type\":4,\"data\":{{\"content\":\"```joins within last year: {}\\njoins within last 30 days: {}\\njoins within last 1 day: {}\\ntotal joins: {}```\"}}}}",
+                                                                        .{ joins_last_year, joins_last_30_days, joins_last_1_day, join_dates.items.len },
+                                                                    );
+                                                                    var buff_format_response: [10000]u8 = undefined;
+                                                                    var formatted_response = try std.fmt.bufPrintZ(
+                                                                        &buff_format_response,
+                                                                        "HTTP/1.1 200 \r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n{s}",
+                                                                        .{
+                                                                            formatted_data.len,
+                                                                            formatted_data,
+                                                                        },
+                                                                    );
+                                                                    try conn.stream.writer().writeAll(formatted_response);
                                                                 } else {
                                                                     std.debug.print("chunk parsing failed and json validating returned false\n", .{});
                                                                 }
-                                                                try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 78\r\nContent-Type: application/json\r\n\r\n{\"type\":4,\"data\":{\"content\":\"hello, it me andy-chan. i make zig go brr! UwU\"}}");
                                                             }
                                                         } else |err| std.debug.print("{s}\n", .{@errorName(err)});
                                                     }
@@ -210,6 +272,55 @@ test "handle chunks" {
                     defer testing_alloc.free(chunk_data_str);
                     try std.testing.expect(chunk_data_str.len > 0);
                     try std.testing.expect(std.json.validate(chunk_data_str) == true);
+                    var parser = std.json.Parser.init(testing_alloc, false);
+                    defer parser.deinit();
+                    var json = try parser.parse(chunk_data_str);
+                    defer json.deinit();
+                    var member_obj = json.root.Array.items;
+                    for (member_obj) |item| {
+                        try std.testing.expect(item.Object.get("joined_at").?.String.len > 0);
+                    }
+                    var join_dates = std.ArrayList([]const u8).init(alloc);
+                    defer join_dates.deinit();
+                    for (member_obj) |mem_obj| {
+                        try join_dates.append(mem_obj.Object.get("joined_at").?.String);
+                    }
+                    var timestamp = std.time.timestamp();
+                    var joins_last_year: usize = 0;
+                    var joins_last_30_days: usize = 0;
+                    var joins_last_1_day: usize = 0;
+                    for (join_dates.items) |join_date_str| {
+                        var date_slice = std.mem.indexOf(u8, join_date_str, "T");
+                        if (date_slice) |ds_last_idx| {
+                            var splitIter = std.mem.split(u8, join_date_str[0..ds_last_idx], "-");
+                            if (splitIter.next()) |yr| {
+                                if (splitIter.next()) |mnth| {
+                                    if (splitIter.next()) |day| {
+                                        var yr_num = utils.parseInt(yr);
+                                        var mnth_num = utils.parseInt(mnth);
+                                        var day_num = utils.parseInt(day);
+                                        const s_per_yr: usize = std.time.s_per_day * 365;
+                                        const s_per_month: usize = std.time.s_per_day * 30;
+                                        var yrs_since_epoch_for_input_yr = yr_num - 1970;
+                                        var s_since_epoch_input_yr =
+                                            @intCast(i64, yrs_since_epoch_for_input_yr * s_per_yr + mnth_num * s_per_month + day_num * std.time.s_per_day);
+                                        if (timestamp - s_per_yr <= s_since_epoch_input_yr) {
+                                            joins_last_year += 1;
+                                        }
+
+                                        if (timestamp - s_per_month <= s_since_epoch_input_yr) {
+                                            joins_last_30_days += 1;
+                                        }
+
+                                        if (timestamp - std.time.s_per_day <= s_since_epoch_input_yr) {
+                                            joins_last_1_day += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    std.log.err("\n{} {} {}\n", .{ joins_last_year, joins_last_30_days, joins_last_1_day });
                 }
             }
         } else |err| std.debug.print("{s}\n", .{@errorName(err)});

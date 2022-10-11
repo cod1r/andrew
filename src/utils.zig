@@ -121,7 +121,7 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
                     // we have to offsest the next_crlf index because we used a subset of the slice to find the next_crlf
                     // and the offset started with actual_crlf
                     var actual_next_crlf = next_crlf + actual_crlf;
-                    try chunk_data.appendSlice(chunked_bodies.items[actual_crlf .. actual_next_crlf]);
+                    try chunk_data.appendSlice(chunked_bodies.items[actual_crlf..actual_next_crlf]);
                     chunked_idx = actual_next_crlf + 2;
                 }
             } else {
@@ -130,7 +130,6 @@ pub fn handle_chunks(alloc: std.mem.Allocator, sbio: ?*main.openssl.BIO, initial
             }
         }
     }
-    // TODO: process chunked bytes and get the actual chunk data and parse into JSON
     return chunk_data.items;
 }
 
