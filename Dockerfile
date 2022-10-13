@@ -5,5 +5,5 @@ COPY . .
 RUN python3 setup.py
 RUN tar -xf zig_master_tarball
 RUN `find . -type f -name "zig"` build -Drelease-safe=true
-CMD ["./zig-out/bin/andrew"]
+RUN ./zig-out/bin/andrew
 EXPOSE 80
