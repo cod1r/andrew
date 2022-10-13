@@ -1,6 +1,8 @@
 zig
 zig-out/
 zig-cache/
+zig_master_tarball
+zig-linux*
 *.txt
 tests/
 *.sh

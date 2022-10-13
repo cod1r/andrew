@@ -47,24 +47,24 @@ pub fn main() !void {
             var msg_size = utils.parse_http_message(msg, &map);
             if (msg_size) |parsed_msg_size| {
                 var content_length = map.get("content-length");
-                if (content_length) |cl| {
-                    var content_length_number: usize = utils.parseInt(cl);
-                    var body_buffer = try alloc.alloc(u8, content_length_number);
-                    defer alloc.free(body_buffer);
-                    var body_initial = msg[parsed_msg_size..headers_read_size];
-                    std.mem.copy(u8, body_buffer, body_initial);
-                    var body_buffer_len = headers_read_size - parsed_msg_size;
-                    if (headers_read_size - parsed_msg_size < content_length_number) {
-                        var read_body = try conn.stream.reader().read(body_buffer[body_buffer_len..]);
-                        while (read_body < content_length_number) {
-                            read_body += try conn.stream.reader().read(body_buffer[body_buffer_len + read_body ..]);
-                        }
-                        body_buffer_len += read_body;
-                    }
-                    if (map.get("method")) |method| {
-                        if (std.mem.eql(u8, method, "GET")) {
-                            try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 40\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
-                        } else if (std.mem.eql(u8, method, "POST")) {
+                if (map.get("method")) |method| {
+                    if (std.mem.eql(u8, method, "GET")) {
+                        try conn.stream.writer().writeAll("HTTP/1.1 200 \r\nContent-Length: 40\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>This is cod1r's zig discord bot</h1>");
+                    } else if (std.mem.eql(u8, method, "POST")) {
+                        if (content_length) |cl| {
+                            var content_length_number: usize = utils.parseInt(cl);
+                            var body_buffer = try alloc.alloc(u8, content_length_number);
+                            defer alloc.free(body_buffer);
+                            var body_initial = msg[parsed_msg_size..headers_read_size];
+                            std.mem.copy(u8, body_buffer, body_initial);
+                            var body_buffer_len = headers_read_size - parsed_msg_size;
+                            if (headers_read_size - parsed_msg_size < content_length_number) {
+                                var read_body = try conn.stream.reader().read(body_buffer[body_buffer_len..]);
+                                while (read_body < content_length_number) {
+                                    read_body += try conn.stream.reader().read(body_buffer[body_buffer_len + read_body ..]);
+                                }
+                                body_buffer_len += read_body;
+                            }
                             if (std.mem.eql(u8, map.get("content-type").?, "application/json")) {
                                 var parser = std.json.Parser.init(alloc, false);
                                 defer parser.deinit();
