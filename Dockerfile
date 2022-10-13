@@ -5,3 +5,4 @@ COPY . .
 RUN python3 setup.py
 RUN tar -xf zig_master_tarball
 RUN `find . -type f -name "zig"` build -Drelease-safe=true
+EXPOSE 80
