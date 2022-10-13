@@ -1,6 +1,8 @@
 import urllib.request
 import json
-with urllib.request.urlopen("https://ziglang.org/download/index.json") as f:
+import ssl
+req = urllib.request.Request(url="https://ziglang.org/download/index.json", method="GET")
+with urllib.request.urlopen(req) as f:
     index = f.read()
     index_obj = json.loads(index)
     zig_master = index_obj['master']['x86_64-linux']['tarball']
