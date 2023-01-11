@@ -123,6 +123,7 @@ pub fn main() !void {
                                                 var ssl: *openssl.SSL = undefined;
                                                 var ctx: *openssl.SSL_CTX = openssl.SSL_CTX_new(openssl.TLS_client_method()).?;
                                                 var sbio = openssl.BIO_new_ssl_connect(ctx);
+                                                defer openssl.BIO_free_all(sbio);
                                                 _ = openssl.BIO_get_ssl(sbio, &ssl);
                                                 _ = openssl.BIO_set_conn_hostname(sbio, "discord.com:443");
                                                 var res = openssl.BIO_do_connect(sbio);
@@ -215,7 +216,6 @@ pub fn main() !void {
                                                         } else |err| std.debug.print("{s}\n", .{@errorName(err)});
                                                     }
                                                 }
-                                                openssl.BIO_free_all(sbio);
                                             }
                                         },
                                         3 => {},
@@ -245,6 +245,7 @@ test "handle chunks" {
     var ssl: *openssl.SSL = undefined;
     var ctx: *openssl.SSL_CTX = openssl.SSL_CTX_new(openssl.TLS_client_method()).?;
     var sbio = openssl.BIO_new_ssl_connect(ctx);
+    defer openssl.BIO_free_all(sbio);
     _ = openssl.BIO_get_ssl(sbio, &ssl);
     _ = openssl.BIO_set_conn_hostname(sbio, "discord.com:443");
     var res = openssl.BIO_do_connect(sbio);
@@ -326,5 +327,4 @@ test "handle chunks" {
             }
         } else |err| std.debug.print("{s}\n", .{@errorName(err)});
     }
-    openssl.BIO_free_all(sbio);
 }
