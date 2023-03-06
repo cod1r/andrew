@@ -14,7 +14,7 @@ pub fn read_header_openssl(buff: []u8, sbio: ?*main.openssl.BIO) !usize {
 pub fn get_chunk_size(buff: []const u8) !usize {
     if (buff.len == 0) return 0;
     var size: usize = 0;
-    for (buff) |_, index| {
+    for (buff, 0..) |_, index| {
         if (buff[index] == ';' or buff[index] == '\r') {
             var idx: usize = 0;
             while (idx < index) {
@@ -196,7 +196,7 @@ pub fn toLower(str: []u8) void {
 }
 pub fn parseInt(str: []const u8) usize {
     var res: usize = 0;
-    for (str) |chr, idx| {
+    for (str, 0..) |chr, idx| {
         res += (chr - '0') * (std.math.pow(u16, 10, @intCast(u16, str.len - 1 - idx)));
     }
     return res;
@@ -306,7 +306,7 @@ test "fromHex: signature" {
         14,
     };
     try std.testing.expect(slice.len == std.mem.len(&correct));
-    for (slice) |byte, idx| {
+    for (slice, 0..) |byte, idx| {
         try std.testing.expect(byte == correct[idx]);
     }
 }
@@ -384,7 +384,7 @@ test "fromHex: signature2" {
         15,
     };
     try std.testing.expect(std.mem.len(correct) == slice.len);
-    for (correct) |byte, idx| {
+    for (correct, 0..) |byte, idx| {
         try std.testing.expect(byte == slice[idx]);
     }
 }

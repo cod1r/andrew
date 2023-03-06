@@ -6,3 +6,4 @@ zig-linux*
 *.txt
 tests/
 *.sh
+fly.toml
